@@ -1,0 +1,124 @@
+#include "zenith_xdg_surface.hpp"
+#include "zenith_xdg_toplevel.hpp"
+#include "binary_messenger.hpp"
+#include "server.hpp"
+#include "assert.hpp"
+#include "output/zenith_output_manager.hpp"
+
+extern "C" {
+#include <wlr/util/log.h>
+}
+
+ZenithXdgSurface::ZenithXdgSurface(wlr_xdg_surface* xdg_surface, std::shared_ptr<ZenithSurface> zenith_surface)
+	  : xdg_surface{xdg_surface}, zenith_surface(std::move(zenith_surface)) {
+	destroy.notify = zenith_xdg_surface_destroy;
+	wl_signal_add(&xdg_surface->events.destroy, &destroy);
+
+	map.notify = zenith_xdg_surface_map;
+	wl_signal_add(&xdg_surface->surface->events.map, &map);
+
+	unmap.notify = zenith_xdg_surface_unmap;
+	wl_signal_add(&xdg_surface->surface->events.unmap, &unmap);
+}
+
+ZenithXdgSurface::~ZenithXdgSurface() {
+	// Listener links are detached in zenith_xdg_surface_destroy while wlroots
+	// destroy signal is being emitted.
+}
+
+static std::shared_ptr<ZenithXdgSurface> register_xdg_surface(ZenithServer* server, wlr_xdg_surface* xdg_surface) {
+	auto* zenith_surface = static_cast<ZenithSurface*>(xdg_surface->surface->data);
+	const std::shared_ptr<ZenithSurface>& zenith_surface_ref = server->surfaces.at(zenith_surface->id);
+
+	auto* zenith_xdg_surface = new ZenithXdgSurface(xdg_surface, zenith_surface_ref);
+	xdg_surface->data = zenith_xdg_surface;
+	auto zenith_xdg_surface_ref = std::shared_ptr<ZenithXdgSurface>(zenith_xdg_surface);
+	server->xdg_surfaces.insert(std::make_pair(zenith_surface->id, zenith_xdg_surface_ref));
+	return zenith_xdg_surface_ref;
+}
+
+void zenith_xdg_toplevel_create(wl_listener* listener, void* data) {
+	ZenithServer* server = wl_container_of(listener, server, new_xdg_toplevel);
+	auto* toplevel = static_cast<wlr_xdg_toplevel*>(data);
+	wlr_log(WLR_INFO, "zenith: new_toplevel event received");
+	auto zenith_xdg_surface_ref = register_xdg_surface(server, toplevel->base);
+	size_t id = zenith_xdg_surface_ref->zenith_surface->id;
+	auto zenith_toplevel = new ZenithXdgToplevel(toplevel, zenith_xdg_surface_ref);
+	server->xdg_toplevels.insert(std::make_pair(id, zenith_toplevel));
+	wlr_log(WLR_INFO, "zenith: toplevel registered with id=%zu", id);
+}
+
+void zenith_xdg_popup_create(wl_listener* listener, void* data) {
+	ZenithServer* server = wl_container_of(listener, server, new_xdg_popup);
+	auto* popup = static_cast<wlr_xdg_popup*>(data);
+	auto zenith_xdg_surface_ref = register_xdg_surface(server, popup->base);
+	size_t id = zenith_xdg_surface_ref->zenith_surface->id;
+	auto zenith_popup = new ZenithXdgPopup(popup, zenith_xdg_surface_ref);
+	server->xdg_popups.insert(std::make_pair(id, zenith_popup));
+}
+
+void zenith_xdg_surface_map(wl_listener* listener, void* data) {
+	ZenithXdgSurface* zenith_xdg_surface = wl_container_of(listener, zenith_xdg_surface, map);
+	size_t id = zenith_xdg_surface->zenith_surface->id;
+	wlr_log(WLR_INFO, "zenith: xdg_surface map, id=%zu, role=%d", id, zenith_xdg_surface->xdg_surface->role);
+	auto* server = ZenithServer::instance();
+
+	// Apply deferred maximize (couldn't be done before surface was initialized)
+	if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+		auto it = server->xdg_toplevels.find(id);
+		if (it != server->xdg_toplevels.end()) {
+			ZenithXdgToplevel* toplevel = it->second.get();
+			if (toplevel->pending_maximize) {
+				toplevel->pending_maximize = false;
+				toplevel->resize(server->max_window_size.width, server->max_window_size.height);
+				toplevel->maximize(true);
+			}
+		}
+	}
+
+	server->embedder_state->map_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
+	server->output_manager->schedule_compositor_frame();
+}
+
+void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
+	ZenithXdgSurface* zenith_xdg_surface = wl_container_of(listener, zenith_xdg_surface, unmap);
+	size_t id = zenith_xdg_surface->zenith_surface->id;
+	auto* server = ZenithServer::instance();
+	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
+		wlr_seat_pointer_notify_clear_focus(server->seat);
+		if (server->pointer != nullptr) {
+			server->pointer->restore_default_cursor();
+		}
+	}
+	server->embedder_state->unmap_xdg_surface(id);
+	server->output_manager->schedule_compositor_frame();
+}
+
+void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
+	ZenithXdgSurface* zenith_xdg_surface = wl_container_of(listener, zenith_xdg_surface, destroy);
+	size_t id = zenith_xdg_surface->zenith_surface->id;
+
+	auto* server = ZenithServer::instance();
+
+	// wlroots emits xdg_surface destroy and then asserts listener lists are empty.
+	wl_list_remove(&zenith_xdg_surface->map.link);
+	wl_list_remove(&zenith_xdg_surface->unmap.link);
+	wl_list_remove(&zenith_xdg_surface->destroy.link);
+
+	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
+		wlr_seat_pointer_notify_clear_focus(server->seat);
+		if (server->pointer != nullptr) {
+			server->pointer->restore_default_cursor();
+		}
+	}
+
+	if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+		bool erased = server->xdg_toplevels.erase(id);
+		assert(erased);
+	} else if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_POPUP) {
+		bool erased = server->xdg_popups.erase(id);
+		assert(erased);
+	}
+	bool erased = server->xdg_surfaces.erase(id);
+	assert(erased);
+}

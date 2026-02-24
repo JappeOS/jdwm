@@ -1,0 +1,48 @@
+name: jdwm
+description: The Flutter UI library for the JDWM window manager.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  shadcn_flutter:
+    git:
+      url: https://github.com/JappeOS/shadcn_flutter.git
+      ref: master
+
+  prioritized_event:
+    git:
+      url: https://github.com/JappeOS/prioritized_event.git
+      ref: main
+
+  vector_math: ^2.1.4
+  event: ^3.1.0
+  provider: ^6.1.5+1
+  flutter_riverpod: ^3.2.1
+  riverpod_annotation: ^4.0.2
+  freezed_annotation: ^3.1.0
+  fast_immutable_collections: ^9.1.5
+  visibility_detector: ^0.4.0+2
+  arena_listener: ^0.0.1
+  freedesktop_desktop_entry: ^0.6.0
+  jovial_svg: ^1.1.15
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  build_runner: ^2.11.1
+  riverpod_generator: ^4.0.3
+  freezed: ^3.2.5
+
+dependency_overrides:
+  freezed_annotation: ^3.1.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/cursor/

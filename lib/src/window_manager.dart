@@ -1,0 +1,596 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart';
+import 'package:jdwm/src/backend/platform_api.dart';
+import 'package:jdwm/ui/common/popup_stack.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
+import 'package:jdwm/src/core/models/resize.dart';
+import 'package:jdwm/src/core/models/toplevel_decoration.dart';
+import 'package:jdwm/ui/common/xdg_toplevel_surface.dart';
+
+import 'client_cursor.dart';
+import 'monitor_region.dart';
+import 'window_entry.dart';
+import 'window_hierarchy.dart';
+
+class WindowManager extends StatefulWidget {
+  final List<MonitorConfig> monitors;
+  final Widget Function(BuildContext context, MonitorConfig monitor)? monitorBuilder;
+  final Widget Function(BuildContext context, MonitorConfig monitor)? monitorOverlayBuilder;
+  final bool enableZenithBackend;
+
+  const WindowManager({
+    super.key,
+    this.monitors = const [],
+    this.monitorBuilder,
+    this.monitorOverlayBuilder,
+    this.enableZenithBackend = true,
+  });
+
+  @override
+  State<WindowManager> createState() => WindowManagerState();
+
+  static WindowManagerState? of(BuildContext context) {
+    return context.findAncestorStateOfType<WindowManagerState>();
+  }
+}
+
+class WindowManagerState extends State<WindowManager> {
+  static const _autoMonitorId = '__jdwm_auto_monitor__';
+
+  final GlobalKey<WindowHierarchyState> _hierarchyKey = GlobalKey();
+  final Map<String, GlobalKey> _regionKeys = {};
+  final Map<int, WindowEntry> _backendWindows = {};
+  final Map<int, List<ProviderSubscription>> _backendSubscriptions = {};
+  final Map<int, VoidCallback> _backendFocusNodeDetachers = {};
+  List<MonitorConfig> _effectiveMonitors = const [];
+
+  Widget? _clientCursor;
+  ProviderContainer? _backendContainer;
+  ProviderSubscription? _windowMappedSubscription;
+  ProviderSubscription? _windowUnmappedSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncRegionKeys(widget.monitors);
+    if (widget.enableZenithBackend) {
+      _initZenithBackend();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant WindowManager oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.monitors != widget.monitors) {
+      _syncRegionKeys(widget.monitors);
+    }
+  }
+
+  @override
+  void dispose() {
+    _windowMappedSubscription?.close();
+    _windowUnmappedSubscription?.close();
+    for (final subs in _backendSubscriptions.values) {
+      for (final sub in subs) {
+        sub.close();
+      }
+    }
+    for (final detach in _backendFocusNodeDetachers.values) {
+      detach();
+    }
+    _backendFocusNodeDetachers.clear();
+    _backendContainer?.dispose();
+    super.dispose();
+  }
+
+  void _initZenithBackend() {
+    _backendContainer = ProviderContainer();
+
+    final platformApi = _backendContainer!.read(platformApiProvider.notifier);
+    platformApi.init();
+    platformApi.startWindowsMaximized(false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      platformApi.startupComplete();
+    });
+
+    final initial = _backendContainer!.read(mappedWindowListProvider);
+    for (final viewId in initial) {
+      _addBackendWindow(viewId);
+    }
+
+    _windowMappedSubscription = _backendContainer!.listen(windowMappedStreamProvider, (_, next) {
+      if (next case AsyncData<int>(:final value)) {
+        _addBackendWindow(value);
+      }
+    });
+    _windowUnmappedSubscription = _backendContainer!.listen(windowUnmappedStreamProvider, (_, next) {
+      if (next case AsyncData<int>(:final value)) {
+        _removeBackendWindow(value);
+      }
+    });
+  }
+
+  void _addBackendWindow(int viewId) {
+    if (_backendWindows.containsKey(viewId)) {
+      return;
+    }
+
+    final entry = WindowEntry(
+      title: '',
+      icon: const AssetImage('assets/cursor/grabbing.png'),
+      backendViewId: viewId,
+      content: XdgToplevelSurface(
+        key: ValueKey('xdg_$viewId'),
+        viewId: viewId,
+      ),
+    );
+    final initialDecoration =
+        _backendContainer!.read(xdgToplevelStatesProvider(viewId)).decoration;
+    entry.chromeMode = initialDecoration == ToplevelDecoration.serverSide
+        ? WindowChromeMode.decorated
+        : WindowChromeMode.borderless;
+    _updateBackendWindowSizeFromState(viewId, entry);
+
+    _backendWindows[viewId] = entry;
+    pushWindow(entry);
+    requestFocus(entry);
+
+    _attachBackendListeners(viewId, entry);
+  }
+
+  void _removeBackendWindow(int viewId) {
+    final entry = _backendWindows.remove(viewId);
+    if (entry != null) {
+      popWindow(entry);
+    }
+
+    final subs = _backendSubscriptions.remove(viewId);
+    if (subs != null) {
+      for (final sub in subs) {
+        sub.close();
+      }
+    }
+
+    final detachFocus = _backendFocusNodeDetachers.remove(viewId);
+    detachFocus?.call();
+  }
+
+  void _attachBackendListeners(int viewId, WindowEntry entry) {
+    final subs = <ProviderSubscription>[];
+    final focusNode = _backendContainer!.read(xdgToplevelStatesProvider(viewId)).focusNode;
+    void onFocusChange() {
+      if (!mounted) {
+        return;
+      }
+      if (focusNode.hasFocus) {
+        requestFocus(entry);
+      }
+    }
+    focusNode.addListener(onFocusChange);
+    _backendFocusNodeDetachers[viewId] = () {
+      focusNode.removeListener(onFocusChange);
+    };
+
+    subs.add(
+      _backendContainer!.listen(
+        xdgToplevelStatesProvider(viewId).select((v) => v.title),
+        (_, next) {
+          if (next.isNotEmpty && entry.title != next) {
+            entry.title = next;
+          }
+        },
+      ),
+    );
+
+    subs.add(
+      _backendContainer!.listen(
+        xdgToplevelStatesProvider(viewId).select((v) => v.visible),
+        (_, next) {
+          entry.minimized = !next;
+        },
+        fireImmediately: true,
+      ),
+    );
+
+    subs.add(
+      _backendContainer!.listen(
+        xdgToplevelStatesProvider(viewId).select((v) => v.maximized),
+        (previous, next) {
+          entry.maximized = next;
+          final becameMaximized = previous != true && next;
+          final becameRestored = previous == true && !next;
+          if (becameMaximized) {
+            entry.restoreRectAfterMaximize = entry.windowRect;
+            entry.restoreMonitorIdAfterMaximize = entry.monitorId;
+          } else if (becameRestored) {
+            entry.windowDock = WindowDock.normal;
+            final restoreRect = entry.restoreRectAfterMaximize;
+            if (restoreRect != null) {
+              final backendViewId = entry.backendViewId;
+              if (backendViewId != null) {
+                _backendContainer!
+                    .read(xdgToplevelStatesProvider(backendViewId).notifier)
+                    .resize(restoreRect.width.round(), restoreRect.height.round());
+              }
+              entry.windowRect = restoreRect;
+              entry.restoreRectAfterMaximize = null;
+            }
+            final restoreMonitorId = entry.restoreMonitorIdAfterMaximize;
+            if (restoreMonitorId != null) {
+              entry.monitorId = restoreMonitorId;
+              entry.restoreMonitorIdAfterMaximize = null;
+            }
+          }
+        },
+        fireImmediately: true,
+      ),
+    );
+
+    subs.add(
+      _backendContainer!.listen(
+        xdgToplevelStatesProvider(viewId).select((v) => v.decoration),
+        (_, next) {
+          // Match legacy zenith_backend behavior:
+          // - none/clientSide => app draws its own chrome (no JDWM decorations)
+          // - serverSide => JDWM draws server-side decorations
+          entry.chromeMode = next == ToplevelDecoration.serverSide
+              ? WindowChromeMode.decorated
+              : WindowChromeMode.borderless;
+          _updateBackendWindowSizeFromState(viewId, entry);
+        },
+        fireImmediately: true,
+      ),
+    );
+
+    subs.add(
+      _backendContainer!.listen(
+        xdgSurfaceStatesProvider(viewId).select((v) => v.visibleBounds),
+        (previous, next) {
+          if (next.size.isEmpty) {
+            return;
+          }
+          final current = entry.windowRect;
+          var left = current.left;
+          var top = current.top;
+
+          final edge = entry.backendInteractiveResizeEdge;
+          if (edge != null && previous != null && previous.size.isEmpty == false) {
+            final offset = _computeWindowOffset(edge, previous.size, next.size);
+            left += offset.dx;
+            top += offset.dy;
+          }
+
+          entry.windowRect = Rect.fromLTWH(
+            left,
+            top,
+            next.width,
+            next.height,
+          );
+        },
+      ),
+    );
+
+    _backendSubscriptions[viewId] = subs;
+  }
+
+  void _updateBackendWindowSizeFromState(int viewId, WindowEntry entry) {
+    final visibleBounds = _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
+    if (visibleBounds.size.isEmpty) {
+      return;
+    }
+
+    final current = entry.windowRect;
+    entry.windowRect = Rect.fromLTWH(
+      current.left,
+      current.top,
+      visibleBounds.width,
+      visibleBounds.height,
+    );
+  }
+
+  Offset _computeWindowOffset(ResizeEdge edge, Size oldSize, Size newSize) {
+    final dx = newSize.width - oldSize.width;
+    final dy = newSize.height - oldSize.height;
+    switch (edge) {
+      case ResizeEdge.topLeft:
+        return Offset(-dx, -dy);
+      case ResizeEdge.top:
+      case ResizeEdge.topRight:
+        return Offset(0, -dy);
+      case ResizeEdge.left:
+      case ResizeEdge.bottomLeft:
+        return Offset(-dx, 0);
+      case ResizeEdge.right:
+      case ResizeEdge.bottomRight:
+      case ResizeEdge.bottom:
+        return Offset.zero;
+    }
+  }
+
+  /// Returns the [MonitorConfig] whose bounds contain [position], or null.
+  MonitorConfig? getMonitorAtPosition(Offset position) {
+    for (final monitor in _effectiveMonitors) {
+      if (monitor.bounds.contains(position)) {
+        return monitor;
+      }
+    }
+    return null;
+  }
+
+  /// Look up a [MonitorConfig] by id.
+  MonitorConfig? getMonitorById(String id) {
+    try {
+      return _effectiveMonitors.firstWhere((m) => m.id == id);
+    } on StateError {
+      return null;
+    }
+  }
+
+  /// Returns the [GlobalKey] for the [MonitorRegion] widget of the given
+  /// monitor.
+  GlobalKey? getRegionKey(String monitorId) => _regionKeys[monitorId];
+
+  void setClientCursor(SystemMouseCursor cursor, Offset globalPosition) {
+    setState(() {
+      _clientCursor = Positioned(
+        left: globalPosition.dx,
+        top: globalPosition.dy,
+        child: FractionalTranslation(
+          translation: const Offset(-0.5, -0.5),
+          child: ClientCursor.get(cursor),
+        ),
+      );
+      setCursorVisible(false);
+    });
+  }
+
+  void endClientCursor() {
+    setState(() {
+      _clientCursor = null;
+      setCursorVisible(true);
+    });
+  }
+
+  Future<void> setCursorVisible(bool visible) async {
+    if (_backendContainer == null) {
+      return;
+    }
+    await _backendContainer!.read(platformApiProvider.notifier).setCursorVisible(visible);
+  }
+
+  Future<void> lockCursor(bool locked) async {
+    if (_backendContainer == null) {
+      return;
+    }
+    await _backendContainer!.read(platformApiProvider.notifier).lockCursor(locked);
+  }
+
+  void pushWindow(WindowEntry entry, {String? monitorId}) {
+    final targetMonitorId = monitorId ??
+        (_effectiveMonitors.isNotEmpty
+            ? _effectiveMonitors.first.id
+            : (widget.monitors.isNotEmpty ? widget.monitors.first.id : null));
+    if (targetMonitorId != null) {
+      entry.monitorId = targetMonitorId;
+    }
+    _hierarchyKey.currentState?.pushWindowEntry(entry);
+  }
+
+  void popWindow(WindowEntry entry) {
+    final hierarchy = _hierarchyKey.currentState;
+    if (hierarchy == null) {
+      return;
+    }
+    final wasFocused =
+        hierarchy.entriesByFocus.isNotEmpty && hierarchy.entriesByFocus.last == entry;
+    hierarchy.popWindowEntry(entry);
+
+    if (wasFocused) {
+      final remaining = hierarchy.entriesByFocus;
+      if (remaining.isNotEmpty) {
+        requestFocus(remaining.last);
+      }
+    }
+  }
+
+  List<WindowEntry> getAllWindows() {
+    return _hierarchyKey.currentState?.windows ?? [];
+  }
+
+  List<WindowEntry> getWindowsOnMonitor(String monitorId) {
+    return _hierarchyKey.currentState?.windows
+            .where((e) => e.monitorId == monitorId)
+            .toList() ??
+        [];
+  }
+
+  /// Unified focus path for both backend (CSD/SSD) and local windows.
+  ///
+  /// Ensures z-order focus is updated once and backend keyboard focus stays
+  /// single-owner (no two active backend windows).
+  void requestFocus(WindowEntry entry) {
+    _hierarchyKey.currentState?.requestWindowFocus(entry);
+
+    final container = _backendContainer;
+    if (container == null) {
+      return;
+    }
+
+    final targetViewId = entry.backendViewId;
+    for (final viewId in _backendWindows.keys) {
+      final focusNode = container.read(xdgToplevelStatesProvider(viewId)).focusNode;
+      if (targetViewId != null && viewId == targetViewId) {
+        if (!focusNode.hasFocus) {
+          focusNode.requestFocus();
+        }
+      } else {
+        if (focusNode.hasFocus) {
+          focusNode.unfocus();
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final monitors = _resolveMonitors(constraints);
+        _effectiveMonitors = monitors;
+        _syncRegionKeys(monitors);
+        _reconcileWindowMonitorAssignments(monitors);
+
+        final stack = Stack(
+          children: [
+            // Layer 1: per-monitor background (rootWindow)
+            if (widget.monitorBuilder != null) ...[
+              ...monitors.map((monitor) {
+                return Positioned(
+                  left: monitor.bounds.left,
+                  top: monitor.bounds.top,
+                  width: monitor.bounds.width,
+                  height: monitor.bounds.height,
+                  child: widget.monitorBuilder!(context, monitor),
+                );
+              }),
+            ],
+
+            // Layer 2: per-monitor regions (spatial anchors for coordinate
+            // conversion; no window state lives here)
+            for (final monitor in monitors)
+              Positioned(
+                left: monitor.bounds.left,
+                top: monitor.bounds.top,
+                child: MonitorRegion(
+                  config: monitor,
+                  regionKey: _regionKeys[monitor.id]!,
+                  child: const SizedBox.shrink(),
+                ),
+              ),
+
+            // Layer 3: the single window stack, sized to the full global area
+            Positioned.fill(
+              child: WindowHierarchy(
+                key: _hierarchyKey,
+              ),
+            ),
+
+            // Layer 4: popups from the backend compositor
+            if (widget.enableZenithBackend) const PopupStack(),
+
+            // Layer 5: per-monitor overlays (e.g. monitor-specific toolbars)
+            if (widget.monitorOverlayBuilder != null) ...[
+              ...monitors.map((monitor) {
+                return Positioned(
+                  left: monitor.bounds.left,
+                  top: monitor.bounds.top,
+                  width: monitor.bounds.width,
+                  height: monitor.bounds.height,
+                  child: widget.monitorOverlayBuilder!(context, monitor),
+                );
+              }),
+            ],
+
+            // Layer 6: client cursor overlay
+            if (_clientCursor != null) ...[
+              _clientCursor!,
+              const Positioned.fill(
+                child: MouseRegion(
+                  opaque: false,
+                  hitTestBehavior: HitTestBehavior.translucent,
+                  cursor: SystemMouseCursors.none,
+                ),
+              ),
+            ]
+          ],
+        );
+
+        if (!widget.enableZenithBackend) {
+          return stack;
+        }
+
+        if (_backendContainer == null) {
+          return stack;
+        }
+
+        _backendContainer!.read(platformApiProvider.notifier).maximizedWindowSize(
+              constraints.maxWidth.toInt(),
+              constraints.maxHeight.toInt(),
+            );
+        return UncontrolledProviderScope(
+          container: _backendContainer!,
+          child: stack,
+        );
+      },
+    );
+  }
+
+  List<MonitorConfig> _resolveMonitors(BoxConstraints constraints) {
+    if (widget.monitors.isNotEmpty) {
+      return widget.monitors;
+    }
+    return [
+      MonitorConfig(
+        id: _autoMonitorId,
+        bounds: Rect.fromLTWH(
+          0,
+          0,
+          constraints.maxWidth,
+          constraints.maxHeight,
+        ),
+      ),
+    ];
+  }
+
+  void _syncRegionKeys(List<MonitorConfig> monitors) {
+    final monitorIds = monitors.map((m) => m.id).toSet();
+    _regionKeys.removeWhere((id, _) => !monitorIds.contains(id));
+    for (final monitor in monitors) {
+      _regionKeys.putIfAbsent(monitor.id, GlobalKey.new);
+    }
+  }
+
+  void _reconcileWindowMonitorAssignments(List<MonitorConfig> monitors) {
+    if (monitors.isEmpty) {
+      return;
+    }
+    final defaultMonitorId = monitors.first.id;
+    final monitorIds = monitors.map((m) => m.id).toSet();
+    for (final window in _hierarchyKey.currentState?.windows ?? const <WindowEntry>[]) {
+      final id = window.monitorId;
+      if (id == null || !monitorIds.contains(id)) {
+        window.monitorId = defaultMonitorId;
+      }
+    }
+  }
+}
+
+/// Immutable description of one physical monitor.
+class MonitorConfig {
+  final String id;
+  final Rect bounds; // Position and size in global coordinates
+  final EdgeInsets? margin;
+
+  const MonitorConfig({
+    required this.id,
+    required this.bounds,
+    this.margin,
+  });
+
+  /// The usable area inside [bounds] after applying [margin].
+  Rect get usableBounds {
+    final m = margin ?? EdgeInsets.zero;
+    return Rect.fromLTRB(
+      bounds.left + m.left,
+      bounds.top + m.top,
+      bounds.right - m.right,
+      bounds.bottom - m.bottom,
+    );
+  }
+
+  /// Usable size (convenience).
+  Size get usableSize => usableBounds.size;
+}

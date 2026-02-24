@@ -1,0 +1,129 @@
+#include "server.hpp"
+#include "touch.hpp"
+#include "time.hpp"
+#include "embedder.h"
+
+static int32_t device_id(int32_t touch_id) {
+	// Device id 0 is reserved for the cursor.
+	return touch_id + 1;
+}
+
+ZenithTouchDevice::ZenithTouchDevice(ZenithServer* server, wlr_input_device* wlr_device)
+	  : server(server), wlr_device(wlr_device) {
+	touch_down.notify = touch_down_handle;
+	wl_signal_add(&wlr_touch_from_input_device(wlr_device)->events.down, &touch_down);
+
+	touch_motion.notify = touch_motion_handle;
+	wl_signal_add(&wlr_touch_from_input_device(wlr_device)->events.motion, &touch_motion);
+
+	touch_up.notify = touch_up_handle;
+	wl_signal_add(&wlr_touch_from_input_device(wlr_device)->events.up, &touch_up);
+
+	touch_cancel.notify = touch_cancel_handle;
+	wl_signal_add(&wlr_touch_from_input_device(wlr_device)->events.cancel, &touch_cancel);
+}
+
+void touch_down_handle(wl_listener* listener, void* data) {
+	ZenithTouchDevice* touch_device = wl_container_of(listener, touch_device, touch_down);
+	ZenithServer* server = touch_device->server;
+	auto* event = static_cast<wlr_touch_down_event*>(data);
+
+	// Hide cursor
+	if (server->pointer != nullptr) {
+		server->pointer->set_visible(false);
+		// Clear the pointer focus, otherwise the hover effect will be visible as if the cursor was still there.
+		wlr_seat_pointer_notify_clear_focus(server->seat);
+	}
+
+	FlutterPointerEvent e = {};
+	e.struct_size = sizeof(FlutterPointerEvent);
+	e.phase = kDown;
+	e.timestamp = current_time_microseconds();
+	// Map from [0, 1] to [output_width, output_height].
+	wlr_box box_val;
+	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
+	wlr_box* box = &box_val;
+	e.x = event->x * box->width;
+	e.y = event->y * box->height;
+
+	touch_device->last_touch_coordinates[event->touch_id] = std::pair(event->x, event->y);
+
+	e.device_kind = kFlutterPointerDeviceKindTouch;
+	e.signal_kind = kFlutterPointerSignalKindNone;
+	e.device = device_id(event->touch_id);
+
+	server->embedder_state->send_pointer_event(e);
+}
+
+void touch_motion_handle(wl_listener* listener, void* data) {
+	ZenithTouchDevice* touch_device = wl_container_of(listener, touch_device, touch_motion);
+	ZenithServer* server = touch_device->server;
+	auto* event = static_cast<wlr_touch_motion_event*>(data);
+
+	FlutterPointerEvent e = {};
+	e.struct_size = sizeof(FlutterPointerEvent);
+	e.phase = kMove;
+
+	e.timestamp = current_time_microseconds();
+	wlr_box box_val;
+	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
+	wlr_box* box = &box_val;
+	e.x = event->x * box->width;
+	e.y = event->y * box->height;
+
+	touch_device->last_touch_coordinates[event->touch_id] = std::pair(event->x, event->y);
+
+	e.device_kind = kFlutterPointerDeviceKindTouch;
+	e.signal_kind = kFlutterPointerSignalKindNone;
+	e.device = device_id(event->touch_id);
+
+	server->embedder_state->send_pointer_event(e);
+}
+
+void touch_up_handle(wl_listener* listener, void* data) {
+	ZenithTouchDevice* touch_device = wl_container_of(listener, touch_device, touch_up);
+	ZenithServer* server = touch_device->server;
+	auto* event = static_cast<wlr_touch_up_event*>(data);
+
+	FlutterPointerEvent e = {};
+	e.struct_size = sizeof(FlutterPointerEvent);
+	e.phase = kUp;
+
+	auto last_coordinates = touch_device->last_touch_coordinates[event->touch_id];
+	wlr_box box_val;
+	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
+	wlr_box* box = &box_val;
+	e.x = last_coordinates.first * box->width;
+	e.y = last_coordinates.second * box->height;
+
+	e.timestamp = current_time_microseconds();
+	e.device_kind = kFlutterPointerDeviceKindTouch;
+	e.signal_kind = kFlutterPointerSignalKindNone;
+	e.device = device_id(event->touch_id);
+
+	server->embedder_state->send_pointer_event(e);
+}
+
+void touch_cancel_handle(wl_listener* listener, void* data) {
+	ZenithTouchDevice* touch_device = wl_container_of(listener, touch_device, touch_cancel);
+	ZenithServer* server = touch_device->server;
+	auto* event = static_cast<wlr_touch_cancel_event*>(data);
+
+	FlutterPointerEvent e = {};
+	e.struct_size = sizeof(FlutterPointerEvent);
+	e.phase = kCancel;
+
+	auto last_coordinates = touch_device->last_touch_coordinates[event->touch_id];
+	wlr_box box_val;
+	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
+	wlr_box* box = &box_val;
+	e.x = last_coordinates.first * box->width;
+	e.y = last_coordinates.second * box->height;
+
+	e.timestamp = current_time_microseconds();
+	e.device_kind = kFlutterPointerDeviceKindTouch;
+	e.signal_kind = kFlutterPointerSignalKindNone;
+	e.device = device_id(event->touch_id);
+
+	server->embedder_state->send_pointer_event(e);
+}
