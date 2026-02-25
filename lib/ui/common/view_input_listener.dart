@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
+import 'package:jdwm/src/core/models/toplevel_decoration.dart';
 import 'package:jdwm/src/input/mouse_button_tracker.dart';
 import 'package:jdwm/src/input/pointer_focus_manager.dart';
 
@@ -30,6 +33,11 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
   @override
   Widget build(BuildContext context) {
     Rect inputRegion = ref.watch(surfaceStatesProvider(widget.viewId).select((v) => v.inputRegion));
+    Rect visibleBounds = ref.watch(xdgSurfaceStatesProvider(widget.viewId).select((v) => v.visibleBounds));
+    final decoration = ref.watch(xdgToplevelStatesProvider(widget.viewId).select((v) => v.decoration));
+    final eventRegion = decoration == ToplevelDecoration.serverSide
+        ? (visibleBounds.size.isEmpty ? inputRegion : visibleBounds)
+        : (inputRegion.size.isEmpty ? visibleBounds : inputRegion);
 
     return Stack(
       clipBehavior: Clip.none,
@@ -38,17 +46,17 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
           child: widget.child,
         ),
         Positioned.fromRect(
-          rect: inputRegion,
+          rect: eventRegion,
           child: ArenaListener(
             onPointerDown: (PointerDownEvent event) {
-              _onPointerDown(event, inputRegion.topLeft);
+              _onPointerDown(event, eventRegion.topLeft);
               return null;
             },
             onPointerMove: (PointerMoveEvent event, GestureDisposition? disposition) {
               if (disposition == GestureDisposition.rejected) {
                 return;
               }
-              _onPointerMove(event, inputRegion.topLeft);
+              _onPointerMove(event, eventRegion.topLeft);
               return null;
             },
             onPointerUp: (PointerUpEvent event, GestureDisposition? disposition) {
@@ -65,7 +73,7 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
             child: Listener(
               onPointerHover: (PointerHoverEvent event) {
                 if (event.kind == PointerDeviceKind.mouse) {
-                  var position = event.localPosition + inputRegion.topLeft;
+                  var position = event.localPosition + eventRegion.topLeft;
                   _pointerMoved(position);
                 }
               },

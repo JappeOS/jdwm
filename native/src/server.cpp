@@ -37,6 +37,7 @@ ZenithServer* ZenithServer::instance() {
 }
 
 static float read_display_scale();
+static void detach_active_pointer_constraint_listener(ZenithServer* server);
 
 ZenithServer::ZenithServer() {
 	main_thread_id = std::this_thread::get_id();
@@ -159,6 +160,8 @@ ZenithServer::ZenithServer() {
 		wlr_log(WLR_ERROR, "Could not create pointer constraints manager");
 		exit(-1);
 	}
+	active_pointer_constraint_destroy.notify = server_active_pointer_constraint_destroy;
+	wl_list_init(&active_pointer_constraint_destroy.link);
 
 	// Called at the start for each available output, but also when the user plugs in a monitor.
 	new_output.notify = output_create_handle;
@@ -382,14 +385,34 @@ void server_update_pointer_constraint(ZenithServer* server) {
 
 	if (server->active_pointer_constraint != nullptr) {
 		wlr_pointer_constraint_v1_send_deactivated(server->active_pointer_constraint);
+		detach_active_pointer_constraint_listener(server);
 	}
 	server->active_pointer_constraint = constraint;
 	if (constraint != nullptr) {
+		wl_signal_add(&constraint->events.destroy, &server->active_pointer_constraint_destroy);
 		wlr_pointer_constraint_v1_send_activated(constraint);
 	}
 	server->pointer->set_client_locked(
 		constraint != nullptr && constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED
 	);
+}
+
+void server_active_pointer_constraint_destroy(wl_listener* listener, void* data) {
+	(void) data;
+	ZenithServer* server = wl_container_of(listener, server, active_pointer_constraint_destroy);
+	server->active_pointer_constraint = nullptr;
+	if (server->pointer != nullptr) {
+		server->pointer->set_client_locked(false);
+	}
+	detach_active_pointer_constraint_listener(server);
+}
+
+static void detach_active_pointer_constraint_listener(ZenithServer* server) {
+	auto* link = &server->active_pointer_constraint_destroy.link;
+	if (link->next != nullptr && link->prev != nullptr) {
+		wl_list_remove(link);
+		wl_list_init(link);
+	}
 }
 
 void server_seat_request_set_selection(wl_listener* listener, void* data) {

@@ -106,6 +106,7 @@ public:
 	wlr_seat* seat;
 	std::unique_ptr<ZenithPointer> pointer;
 	wlr_pointer_constraint_v1* active_pointer_constraint = nullptr;
+	wl_listener active_pointer_constraint_destroy{};
 	std::list<std::unique_ptr<ZenithKeyboard>> keyboards{};
 	std::list<std::unique_ptr<ZenithTouchDevice>> touch_devices{};
 	std::unordered_set<ZenithTextInput*> text_inputs{};
@@ -132,3 +133,4 @@ void server_seat_request_cursor(wl_listener* listener, void* data);
 void server_seat_request_set_selection(wl_listener* listener, void* data);
 
 void server_update_pointer_constraint(ZenithServer* server);
+void server_active_pointer_constraint_destroy(wl_listener* listener, void* data);

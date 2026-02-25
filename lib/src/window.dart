@@ -58,6 +58,7 @@ class _WindowState extends State<Window> {
   static const double _resizingSpacing = 8;
 
   final GlobalKey _mainContainerKey = GlobalKey();
+  final GlobalKey _toolbarMeasureKey = GlobalKey();
   Offset? _lastDragGlobalPosition;
   double? _dragRawLeft, _dragRawTop;
   double? _rawLeft, _rawTop, _rawRight, _rawBottom;
@@ -69,6 +70,7 @@ class _WindowState extends State<Window> {
   bool _backendInteractiveMoveActive = false;
   ResizeEdge? _backendInteractiveResizeActiveEdge;
   bool _backendInteractionListenersAttached = false;
+  double _measuredToolbarHeight = 0;
 
   @override
   void initState() {
@@ -101,6 +103,28 @@ class _WindowState extends State<Window> {
     _backendInteractiveMoveSubscription?.close();
     _backendInteractiveResizeSubscription?.close();
     super.dispose();
+  }
+
+  void _scheduleToolbarMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final box = _toolbarMeasureKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) {
+        return;
+      }
+      final height = box.size.height;
+      if (!height.isFinite) {
+        return;
+      }
+      if ((height - _measuredToolbarHeight).abs() < 0.5) {
+        return;
+      }
+      setState(() {
+        _measuredToolbarHeight = height;
+      });
+    });
   }
 
   void _attachBackendInteractionListenersIfNeeded() {
@@ -290,7 +314,11 @@ class _WindowState extends State<Window> {
       child: entry.content,
       builder: (BuildContext context, WidgetRef ref, Widget? child) {
         final rect = _backendViewportRectFromRef(ref, entry, viewId);
-        if (rect.size.isEmpty) {
+        if (rect.size.isEmpty ||
+            !rect.left.isFinite ||
+            !rect.top.isFinite ||
+            !rect.width.isFinite ||
+            !rect.height.isFinite) {
           return child!;
         }
         return RectOverflowBox(
@@ -321,10 +349,13 @@ class _WindowState extends State<Window> {
         final docked = entry.maximized || entry.windowDock != WindowDock.normal;
         final isDecorated = entry.chromeMode == WindowChromeMode.decorated;
         final isBackendWindow = entry.backendViewId != null;
+        final isBackendDecorated = isBackendWindow && isDecorated;
         final showResizeHandles =
             !docked && entry.allowResize && (isDecorated || isBackendWindow);
 
         final alignedWindowRect = _alignRect(windowRect);
+        final backendDecoratedHeightOffset =
+            isBackendDecorated && entry.usesToolbar ? _measuredToolbarHeight : 0.0;
 
         final windowContentChild = Listener(
           onPointerDown: (_) {
@@ -345,28 +376,42 @@ class _WindowState extends State<Window> {
               children: [
                 Visibility(
                   visible: entry.usesToolbar,
-                  child: TitlebarDragCallbacks(
-                    onDragStart: _onTitlebarDragStart,
-                    onDrag: _onTitlebarDrag,
-                    onDragEnd: _onTitlebarDragEnd,
-                    child:
-                        entry.toolbar ?? const SizedBox.shrink(),
+                  child: KeyedSubtree(
+                    key: _toolbarMeasureKey,
+                    child: TitlebarDragCallbacks(
+                      onDragStart: _onTitlebarDragStart,
+                      onDrag: _onTitlebarDrag,
+                      onDragEnd: _onTitlebarDragEnd,
+                      child:
+                          entry.toolbar ?? const SizedBox.shrink(),
+                    ),
                   ),
                 ),
-                Expanded(
-                  child: RepaintBoundary(
+                if (isBackendDecorated)
+                  RepaintBoundary(
                     key: entry.repaintBoundaryKey,
-                    child: isDecorated
-                        ? ClipRect(
-                            child: _buildBackendViewportContent(entry),
-                          )
-                        : _buildBackendViewportContent(entry),
+                    child: ClipRect(
+                      child: _buildBackendViewportContent(entry),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: RepaintBoundary(
+                      key: entry.repaintBoundaryKey,
+                      child: isDecorated
+                          ? ClipRect(
+                              child: _buildBackendViewportContent(entry),
+                            )
+                          : _buildBackendViewportContent(entry),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
         );
+        if (isBackendDecorated && entry.usesToolbar) {
+          _scheduleToolbarMeasure();
+        }
 
         final resizeHandles = Visibility(
           visible: showResizeHandles,
@@ -397,17 +442,34 @@ class _WindowState extends State<Window> {
           ),
         );
 
-        final contentPositioned = isBackendWindow
+        final contentPositioned = (isBackendWindow && !isDecorated)
             ? Positioned(
                 left: alignedWindowRect.left,
                 top: alignedWindowRect.top,
                 child: windowContentChild,
               )
+            : isBackendDecorated
+                ? Positioned(
+                    left: alignedWindowRect.left,
+                    top: alignedWindowRect.top,
+                    child: SizedBox(
+                      width: alignedWindowRect.width,
+                      child: windowContentChild,
+                    ),
+                  )
             : Positioned.fromRect(
                 rect: alignedWindowRect,
                 child: windowContentChild,
               );
-        final handleRect = alignedWindowRect.inflate(_resizingSpacing);
+        final handleBaseRect = isBackendDecorated
+            ? Rect.fromLTWH(
+                alignedWindowRect.left,
+                alignedWindowRect.top,
+                alignedWindowRect.width,
+                alignedWindowRect.height + backendDecoratedHeightOffset,
+              )
+            : alignedWindowRect;
+        final handleRect = handleBaseRect.inflate(_resizingSpacing);
 
         return Positioned.fill(
           child: Stack(
@@ -426,11 +488,15 @@ class _WindowState extends State<Window> {
   }
 
   Rect _alignRect(Rect rect) {
+    final left = rect.left.isFinite ? rect.left : 0;
+    final top = rect.top.isFinite ? rect.top : 0;
+    final width = rect.width.isFinite ? max(1.0, rect.width) : 1.0;
+    final height = rect.height.isFinite ? max(1.0, rect.height) : 1.0;
     return Rect.fromLTWH(
-      rect.left.roundToDouble(),
-      rect.top.roundToDouble(),
-      rect.width.roundToDouble(),
-      rect.height.roundToDouble(),
+      left.roundToDouble(),
+      top.roundToDouble(),
+      width.roundToDouble(),
+      height.roundToDouble(),
     );
   }
 
@@ -483,6 +549,9 @@ class _WindowState extends State<Window> {
 
   void _onTitlebarDrag(DragUpdateDetails details) {
     _lastDragGlobalPosition = details.globalPosition;
+    if (_backendViewId != null) {
+      return;
+    }
     _applyWindowDrag(details.delta, details.globalPosition);
   }
 
@@ -568,6 +637,9 @@ class _WindowState extends State<Window> {
 
   void _onTitlebarDragEnd(DragEndDetails details) {
     _dragRawLeft = _dragRawTop = null;
+    if (_backendViewId != null) {
+      return;
+    }
     final pos = _lastDragGlobalPosition;
     if (pos == null) {
       return;
