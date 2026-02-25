@@ -71,6 +71,8 @@ struct EmbedderState {
 
 	void set_window_state(size_t view_id, bool maximized, bool visible);
 
+	void publish_monitor_layout();
+
 	void update_text_editing_state();
 
 	/*

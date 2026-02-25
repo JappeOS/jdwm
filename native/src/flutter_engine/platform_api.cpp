@@ -472,6 +472,17 @@ void enable_display(ZenithServer* server, const flutter::MethodCall<>& call,
 	result->Success();
 }
 
+void request_monitors_snapshot(ZenithServer* server, const flutter::MethodCall<>& call,
+                               std::unique_ptr<flutter::MethodResult<>>&& result) {
+	(void) call;
+	server->callable_queue.enqueue([server] {
+		if (server->embedder_state != nullptr) {
+			server->embedder_state->publish_monitor_layout();
+		}
+	});
+	result->Success();
+}
+
 void hide_keyboard(ZenithServer* server, const flutter::MethodCall<>& call,
                    std::unique_ptr<flutter::MethodResult<>>&& result) {
 

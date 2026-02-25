@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart' as provider_pkg hide Consumer;
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
-import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
@@ -273,6 +272,9 @@ class _WindowState extends State<Window> {
     if (container == null) {
       return;
     }
+    if (value) {
+      WindowManager.of(context)?.prepareBackendMaximizeForWindow(widget.entry);
+    }
     container
         .read(xdgToplevelStatesProvider(viewId).notifier)
         .requestMaximize(value);
@@ -287,9 +289,7 @@ class _WindowState extends State<Window> {
     return Consumer(
       child: entry.content,
       builder: (BuildContext context, WidgetRef ref, Widget? child) {
-        final rect = entry.chromeMode == WindowChromeMode.decorated
-            ? ref.watch(xdgSurfaceStatesProvider(viewId)).visibleBounds
-            : ref.watch(surfaceStatesProvider(viewId)).inputRegion;
+        final rect = _backendViewportRectFromRef(ref, entry, viewId);
         if (rect.size.isEmpty) {
           return child!;
         }
@@ -299,6 +299,10 @@ class _WindowState extends State<Window> {
         );
       },
     );
+  }
+
+  Rect _backendViewportRectFromRef(WidgetRef ref, WindowEntry entry, int viewId) {
+    return ref.watch(xdgSurfaceStatesProvider(viewId)).visibleBounds;
   }
 
   @override
@@ -313,105 +317,109 @@ class _WindowState extends State<Window> {
         if (entry.minimized) return const SizedBox.shrink();
 
         final manager = WindowManager.of(context);
-        final monitor = manager?.getMonitorById(entry.monitorId ?? '');
-        final usable = monitor?.usableBounds;
-
-        final docked =
-            entry.maximized || entry.windowDock != WindowDock.normal;
+        final windowRect = manager?.targetRectForWindow(entry) ?? entry.windowRect;
+        final docked = entry.maximized || entry.windowDock != WindowDock.normal;
         final isDecorated = entry.chromeMode == WindowChromeMode.decorated;
         final isBackendWindow = entry.backendViewId != null;
+        final showResizeHandles =
+            !docked && entry.allowResize && (isDecorated || isBackendWindow);
 
-        final Rect windowRect;
-        if (entry.maximized && usable != null) {
-          windowRect = usable;
-        } else if (usable != null) {
-          windowRect = _getDockedRect(entry, usable);
-        } else {
-          windowRect = entry.windowRect;
-        }
         final alignedWindowRect = _alignRect(windowRect);
 
-        final windowStackChild = Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Listener(
-                onPointerDown: (_) {
-                  final manager = WindowManager.of(context);
-                  if (manager != null) {
-                    manager.requestFocus(entry);
-                  } else {
-                    hierarchy.requestWindowFocus(entry);
-                  }
-                  setState(() {});
-                },
-                child: _buildContainer(
-                  isDecorated: isDecorated,
-                  hasBorder: isDecorated && !docked,
-                  isFocused: hierarchy.entriesByFocus.isNotEmpty
-                             && hierarchy.entriesByFocus.last == entry,
-                  child: Column(
-                    children: [
-                      Visibility(
-                        visible: entry.usesToolbar,
-                        child: TitlebarDragCallbacks(
-                          onDragStart: _onTitlebarDragStart,
-                          onDrag: _onTitlebarDrag,
-                          onDragEnd: _onTitlebarDragEnd,
-                          child:
-                              entry.toolbar ?? const SizedBox.shrink(),
-                        ),
-                      ),
-                      Expanded(
-                        child: RepaintBoundary(
-                          key: entry.repaintBoundaryKey,
-                          child: isDecorated
-                              ? ClipRect(
-                                  child: _buildBackendViewportContent(entry),
-                                )
-                              : _buildBackendViewportContent(entry),
-                        ),
-                      ),
-                    ],
+        final windowContentChild = Listener(
+          onPointerDown: (_) {
+            final manager = WindowManager.of(context);
+            if (manager != null) {
+              manager.requestFocus(entry);
+            } else {
+              hierarchy.requestWindowFocus(entry);
+            }
+            setState(() {});
+          },
+          child: _buildContainer(
+            isDecorated: isDecorated,
+            hasBorder: isDecorated && !docked,
+            isFocused: hierarchy.entriesByFocus.isNotEmpty
+                       && hierarchy.entriesByFocus.last == entry,
+            child: Column(
+              children: [
+                Visibility(
+                  visible: entry.usesToolbar,
+                  child: TitlebarDragCallbacks(
+                    onDragStart: _onTitlebarDragStart,
+                    onDrag: _onTitlebarDrag,
+                    onDragEnd: _onTitlebarDragEnd,
+                    child:
+                        entry.toolbar ?? const SizedBox.shrink(),
                   ),
                 ),
-              ),
-              Visibility(
-                visible: isDecorated && !docked && entry.allowResize,
-                child: WindowResizeGestureDetector(
-                  borderThickness: _resizingSpacing,
-                  listeners: _resizeListeners,
-                  dragWithCursor: _onResizePanWithCursor,
-                  onPanEnd: (details) {
-                    entry.windowRect = Rect.fromLTWH(
-                      entry.windowRect.left,
-                      entry.windowRect.top,
-                      max(entry.minSize.width, entry.windowRect.width),
-                      max(entry.minSize.height, entry.windowRect.height),
-                    );
-                    _notifyBackendResize(context);
-                    _interactiveResizeRequestedForEdge = null;
-                    _rawLeft = _rawTop = _rawRight = _rawBottom = null;
-                    manager?.endClientCursor();
-                    _updateMonitorFromRect(entry, manager);
-                  },
+                Expanded(
+                  child: RepaintBoundary(
+                    key: entry.repaintBoundaryKey,
+                    child: isDecorated
+                        ? ClipRect(
+                            child: _buildBackendViewportContent(entry),
+                          )
+                        : _buildBackendViewportContent(entry),
+                  ),
                 ),
+              ],
+            ),
+          ),
+        );
+
+        final resizeHandles = Visibility(
+          visible: showResizeHandles,
+          child: WindowResizeGestureDetector(
+            borderThickness: _resizingSpacing,
+            listeners: _resizeListeners,
+            dragWithCursor: _onResizePanWithCursor,
+            onPanEnd: (details) {
+              if (isBackendWindow) {
+                _interactiveResizeRequestedForEdge = null;
+                _rawLeft = _rawTop = _rawRight = _rawBottom = null;
+                manager?.endClientCursor();
+                _updateMonitorFromRect(entry, manager);
+                return;
+              }
+              entry.windowRect = Rect.fromLTWH(
+                entry.windowRect.left,
+                entry.windowRect.top,
+                max(entry.minSize.width, entry.windowRect.width),
+                max(entry.minSize.height, entry.windowRect.height),
+              );
+              _notifyBackendResize(context);
+              _interactiveResizeRequestedForEdge = null;
+              _rawLeft = _rawTop = _rawRight = _rawBottom = null;
+              manager?.endClientCursor();
+              _updateMonitorFromRect(entry, manager);
+            },
+          ),
+        );
+
+        final contentPositioned = isBackendWindow
+            ? Positioned(
+                left: alignedWindowRect.left,
+                top: alignedWindowRect.top,
+                child: windowContentChild,
+              )
+            : Positioned.fromRect(
+                rect: alignedWindowRect,
+                child: windowContentChild,
+              );
+        final handleRect = alignedWindowRect.inflate(_resizingSpacing);
+
+        return Positioned.fill(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              contentPositioned,
+              Positioned.fromRect(
+                rect: handleRect,
+                child: resizeHandles,
               ),
             ],
-          );
-
-        if (isBackendWindow) {
-          // Match legacy zenith_backend sizing behavior for compositor windows:
-          // position is controlled by us, while size comes from surface widgets.
-          return Positioned(
-            left: alignedWindowRect.left,
-            top: alignedWindowRect.top,
-            child: windowStackChild,
-          );
-        }
-
-        return Positioned.fromRect(
-          rect: alignedWindowRect,
-          child: windowStackChild,
+          ),
         );
       },
     );
@@ -483,21 +491,23 @@ class _WindowState extends State<Window> {
     final hierarchy =
         provider_pkg.Provider.of<WindowHierarchyState>(context, listen: false);
     final manager = WindowManager.of(context);
+    final wasDocked = entry.windowDock != WindowDock.normal;
     final docked =
         entry.maximized || entry.windowDock != WindowDock.normal;
     final restoreRect = entry.restoreRectAfterMaximize;
+    final dockRestoreRect = entry.restoreRectAfterDock;
     final dragWindowSize = (entry.maximized && restoreRect != null)
         ? restoreRect.size
-        : entry.windowRect.size;
+        : (entry.windowDock != WindowDock.normal && dockRestoreRect != null)
+            ? dockRestoreRect.size
+            : entry.windowRect.size;
 
-    var usable = Rect.zero;
     if (manager != null) {
       final newMonitor =
           manager.getMonitorAtPosition(globalPosition);
       if (newMonitor != null && newMonitor.id != entry.monitorId) {
         entry.monitorId = newMonitor.id;
       }
-      usable = newMonitor?.usableBounds ?? Rect.zero;
       manager.setClientCursor(
         SystemMouseCursors.grabbing,
         globalPosition,
@@ -506,7 +516,7 @@ class _WindowState extends State<Window> {
 
     Rect base;
     if (docked) {
-      final dockedRect = entry.maximized ? usable : _getDockedRect(entry, usable);
+      final dockedRect = manager?.targetRectForWindow(entry) ?? entry.windowRect;
       final relativeX =
           (globalPosition.dx - dockedRect.left) / dockedRect.width;
       final newLeft =
@@ -543,9 +553,16 @@ class _WindowState extends State<Window> {
       _requestBackendMaximize(context, false);
     }
     entry.maximized = false;
+    if (entry.windowDock != WindowDock.normal) {
+      entry.restoreRectAfterDock = null;
+      entry.restoreMonitorIdAfterDock = null;
+    }
     entry.windowDock = WindowDock.normal;
 
     entry.windowRect = base;
+    if (wasDocked && entry.backendViewId != null) {
+      manager?.syncBackendWindowGeometry(entry, force: true);
+    }
     setState(() {});
   }
 
@@ -589,14 +606,18 @@ class _WindowState extends State<Window> {
 
     if ((localPosition.dy <= 2 && localPosition.dx <= 50) ||
         (localPosition.dy <= 50 && localPosition.dx <= 2)) {
+      _captureDockRestore(entry);
       entry.windowDock = WindowDock.topLeft;
+      manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
     if ((localPosition.dy <= 2 &&
             localPosition.dx >= localUsableWidth - 50) ||
         (localPosition.dy <= 50 &&
             localPosition.dx >= localUsableWidth - 2)) {
+      _captureDockRestore(entry);
       entry.windowDock = WindowDock.topRight;
+      manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
     if (localPosition.dy <= 2) {
@@ -605,13 +626,25 @@ class _WindowState extends State<Window> {
       return;
     }
     if (localPosition.dx <= 2) {
+      _captureDockRestore(entry);
       entry.windowDock = WindowDock.left;
+      manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
     if (localPosition.dx >= localUsableWidth - 2) {
+      _captureDockRestore(entry);
       entry.windowDock = WindowDock.right;
+      manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
+  }
+
+  void _captureDockRestore(WindowEntry entry) {
+    if (entry.windowDock != WindowDock.normal || entry.maximized) {
+      return;
+    }
+    entry.restoreRectAfterDock = entry.windowRect;
+    entry.restoreMonitorIdAfterDock = entry.monitorId;
   }
 
   SystemMouseCursor _cursorForResizeEdge(ResizeEdge edge) {
@@ -628,43 +661,6 @@ class _WindowState extends State<Window> {
       case ResizeEdge.top:
       case ResizeEdge.bottom:
         return SystemMouseCursors.resizeUpDown;
-    }
-  }
-
-  Rect _getDockedRect(WindowEntry entry, Rect usable) {
-    switch (entry.windowDock) {
-      case WindowDock.topLeft:
-        return Rect.fromLTWH(usable.left, usable.top, usable.width / 2,
-            usable.height / 2);
-      case WindowDock.top:
-        return Rect.fromLTWH(
-            usable.left, usable.top, usable.width, usable.height / 2);
-      case WindowDock.topRight:
-        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top,
-            usable.width / 2, usable.height / 2);
-      case WindowDock.left:
-        return Rect.fromLTWH(
-            usable.left, usable.top, usable.width / 2, usable.height);
-      case WindowDock.right:
-        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top,
-            usable.width / 2, usable.height);
-      case WindowDock.bottomLeft:
-        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2,
-            usable.width / 2, usable.height / 2);
-      case WindowDock.bottom:
-        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2,
-            usable.width, usable.height / 2);
-      case WindowDock.bottomRight:
-        return Rect.fromLTWH(usable.left + usable.width / 2,
-            usable.top + usable.height / 2, usable.width / 2,
-            usable.height / 2);
-      case WindowDock.normal:
-        return Rect.fromLTWH(
-          entry.windowRect.left,
-          max(usable.top, entry.windowRect.top),
-          max(entry.minSize.width, entry.windowRect.width),
-          max(entry.minSize.height, entry.windowRect.height),
-        );
     }
   }
 
@@ -710,6 +706,10 @@ class _WindowState extends State<Window> {
     );
     if (edge != null) {
       _requestBackendInteractiveResize(context, edge);
+    }
+
+    if (widget.entry.backendViewId != null) {
+      return;
     }
 
     final minWidth = widget.entry.minSize.width;

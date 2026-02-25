@@ -62,6 +62,18 @@ class WindowUnmappedStream extends _$WindowUnmappedStream {
 }
 
 @Riverpod(keepAlive: true)
+class BackendMonitorList extends _$BackendMonitorList {
+  @override
+  IList<BackendMonitor> build() {
+    return IList();
+  }
+
+  void setAll(List<BackendMonitor> monitors) {
+    state = monitors.lock;
+  }
+}
+
+@Riverpod(keepAlive: true)
 class PlatformApi extends _$PlatformApi {
   @override
   PlatformApiState build() => PlatformApiState();
@@ -101,6 +113,9 @@ class PlatformApi extends _$PlatformApi {
           break;
         case "set_window_state":
           _setWindowState(call.arguments);
+          break;
+        case "set_monitors":
+          _setMonitors(call.arguments);
           break;
         default:
           throw PlatformException(
@@ -256,6 +271,10 @@ class PlatformApi extends _$PlatformApi {
     return state.platform.invokeMethod("enable_display", {
       "enable": enable,
     });
+  }
+
+  Future<void> requestMonitorsSnapshot() {
+    return state.platform.invokeMethod("request_monitors_snapshot");
   }
 
   void _commitSurface(dynamic event) {
@@ -472,6 +491,40 @@ class PlatformApi extends _$PlatformApi {
         .setWindowState(visible: visible, maximized: maximized);
   }
 
+  void _setMonitors(dynamic event) {
+    final mapped = <BackendMonitor>[];
+    if (event is List<dynamic>) {
+      for (final monitor in event) {
+        if (monitor is! Map) {
+          continue;
+        }
+        final dynamic id = monitor["id"];
+        final dynamic x = monitor["x"];
+        final dynamic y = monitor["y"];
+        final dynamic width = monitor["width"];
+        final dynamic height = monitor["height"];
+        final dynamic isPrimary = monitor["is_primary"];
+        if (id == null || x == null || y == null || width == null || height == null) {
+          continue;
+        }
+
+        mapped.add(
+          BackendMonitor(
+            id: id.toString(),
+            bounds: Rect.fromLTWH(
+              (x as num).toDouble(),
+              (y as num).toDouble(),
+              (width as num).toDouble(),
+              (height as num).toDouble(),
+            ),
+            isPrimary: isPrimary == true,
+          ),
+        );
+      }
+    }
+    ref.read(backendMonitorListProvider.notifier).setAll(mapped);
+  }
+
   Future<void> hideKeyboard(int viewId) {
     return state.platform.invokeMethod('hide_keyboard', {
       "view_id": viewId,
@@ -510,6 +563,18 @@ class PlatformApiState {
     windowUnmappedStream = _windowUnmappedController.stream;
     windowUnmappedSink = _windowUnmappedController.sink;
   }
+}
+
+class BackendMonitor {
+  const BackendMonitor({
+    required this.id,
+    required this.bounds,
+    required this.isPrimary,
+  });
+
+  final String id;
+  final Rect bounds;
+  final bool isPrimary;
 }
 
 abstract class TextInputEventType {}

@@ -17,97 +17,106 @@ class WindowResizeGestureDetector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final cornerSize = borderThickness * 2;
+    return Stack(
       children: [
-        Row(
-          children: [
-            buildGestureDetector(
-              borderThickness,
-              borderThickness,
-              listeners[Alignment.topLeft]!,
-              SystemMouseCursors.resizeUpLeftDownRight,
-            ),
-            Expanded(
-              child: buildGestureDetector(
-                null,
-                borderThickness,
-                listeners[Alignment.topCenter]!,
-                SystemMouseCursors.resizeUpDown,
-              ),
-            ),
-            buildGestureDetector(
-              borderThickness,
-              borderThickness,
-              listeners[Alignment.topRight]!,
-              SystemMouseCursors.resizeUpRightDownLeft,
-            ),
-          ],
-        ),
-        Expanded(
-          child: Row(
-            children: [
-              buildGestureDetector(
-                borderThickness,
-                null,
-                listeners[Alignment.centerLeft]!,
-                SystemMouseCursors.resizeLeftRight,
-              ),
-              const Spacer(),
-              buildGestureDetector(
-                borderThickness,
-                null,
-                listeners[Alignment.centerRight]!,
-                SystemMouseCursors.resizeLeftRight,
-              ),
-            ],
+        Positioned(
+          left: borderThickness,
+          right: borderThickness,
+          top: 0,
+          height: borderThickness,
+          child: buildGestureDetector(
+            listeners[Alignment.topCenter]!,
+            SystemMouseCursors.resizeUpDown,
           ),
         ),
-        Row(
-          children: [
-            buildGestureDetector(
-              borderThickness,
-              borderThickness,
-              listeners[Alignment.bottomLeft]!,
-              SystemMouseCursors.resizeUpRightDownLeft,
-            ),
-            Expanded(
-              child: buildGestureDetector(
-                null,
-                borderThickness,
-                listeners[Alignment.bottomCenter]!,
-                SystemMouseCursors.resizeUpDown,
-              ),
-            ),
-            buildGestureDetector(
-              borderThickness,
-              borderThickness,
-              listeners[Alignment.bottomRight]!,
-              SystemMouseCursors.resizeUpLeftDownRight,
-            ),
-          ],
+        Positioned(
+          left: borderThickness,
+          right: borderThickness,
+          bottom: 0,
+          height: borderThickness,
+          child: buildGestureDetector(
+            listeners[Alignment.bottomCenter]!,
+            SystemMouseCursors.resizeUpDown,
+          ),
+        ),
+        Positioned(
+          left: 0,
+          top: borderThickness,
+          bottom: borderThickness,
+          width: borderThickness,
+          child: buildGestureDetector(
+            listeners[Alignment.centerLeft]!,
+            SystemMouseCursors.resizeLeftRight,
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: borderThickness,
+          bottom: borderThickness,
+          width: borderThickness,
+          child: buildGestureDetector(
+            listeners[Alignment.centerRight]!,
+            SystemMouseCursors.resizeLeftRight,
+          ),
+        ),
+        Positioned(
+          left: 0,
+          top: 0,
+          width: cornerSize,
+          height: cornerSize,
+          child: buildGestureDetector(
+            listeners[Alignment.topLeft]!,
+            SystemMouseCursors.resizeUpLeftDownRight,
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          width: cornerSize,
+          height: cornerSize,
+          child: buildGestureDetector(
+            listeners[Alignment.topRight]!,
+            SystemMouseCursors.resizeUpRightDownLeft,
+          ),
+        ),
+        Positioned(
+          left: 0,
+          bottom: 0,
+          width: cornerSize,
+          height: cornerSize,
+          child: buildGestureDetector(
+            listeners[Alignment.bottomLeft]!,
+            SystemMouseCursors.resizeUpRightDownLeft,
+          ),
+        ),
+        Positioned(
+          right: 0,
+          bottom: 0,
+          width: cornerSize,
+          height: cornerSize,
+          child: buildGestureDetector(
+            listeners[Alignment.bottomRight]!,
+            SystemMouseCursors.resizeUpLeftDownRight,
+          ),
         ),
       ],
     );
   }
 
   Widget buildGestureDetector(
-    double? width,
-    double? height,
     GestureDragUpdateCallback onPanUpdate,
     SystemMouseCursor cursor,
   ) {
-    return SizedBox(
-      width: width,
-      height: height,
-      child: MouseRegion(
-        cursor: cursor,
-        child: GestureDetector(
-          onPanUpdate: (details) {
-            dragWithCursor(cursor, details);
-            onPanUpdate(details);
-          },
-          onPanEnd: onPanEnd,
-        ),
+    return MouseRegion(
+      cursor: cursor,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanUpdate: (details) {
+          dragWithCursor(cursor, details);
+          onPanUpdate(details);
+        },
+        onPanEnd: onPanEnd,
       ),
     );
   }

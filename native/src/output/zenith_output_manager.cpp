@@ -150,6 +150,9 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 			output->wlr_output->name, server_->outputs.size(),
 			extents.width, extents.height, extents.x, extents.y);
 		schedule_compositor_frame();
+		if (server_->embedder_state != nullptr) {
+			server_->embedder_state->publish_monitor_layout();
+		}
 		return;
 	}
 
@@ -169,6 +172,9 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 		        output->wlr_output->name, server_->outputs.size());
 	}
 	schedule_compositor_frame();
+	if (server_->embedder_state != nullptr) {
+		server_->embedder_state->publish_monitor_layout();
+	}
 }
 
 void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) const {
@@ -185,6 +191,9 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 
 	if (server_->outputs.empty()) {
 		server_->output = nullptr;
+		if (server_->embedder_state != nullptr) {
+			server_->embedder_state->publish_monitor_layout();
+		}
 		return;
 	}
 
@@ -195,6 +204,9 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 		update_scene_node_positions(server_);
 		ensure_extend_render_target(server_);
 		send_virtual_desktop_metrics(server_);
+		if (server_->embedder_state != nullptr) {
+			server_->embedder_state->publish_monitor_layout();
+		}
 		return;
 	}
 
@@ -214,6 +226,9 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 	}
 	add_output_to_layout(server_, server_->output.get());
 	send_single_output_metrics(server_, server_->output.get());
+	if (server_->embedder_state != nullptr) {
+		server_->embedder_state->publish_monitor_layout();
+	}
 }
 
 void ZenithOutputManager::handle_output_state_changed(ZenithOutput* changed_output) const {
@@ -224,10 +239,16 @@ void ZenithOutputManager::handle_output_state_changed(ZenithOutput* changed_outp
 		update_scene_node_positions(server_);
 		ensure_extend_render_target(server_);
 		send_virtual_desktop_metrics(server_);
+		if (server_->embedder_state != nullptr) {
+			server_->embedder_state->publish_monitor_layout();
+		}
 		return;
 	}
 	if (server_->output != nullptr && server_->output->wlr_output == changed_output->wlr_output) {
 		send_single_output_metrics(server_, changed_output);
+		if (server_->embedder_state != nullptr) {
+			server_->embedder_state->publish_monitor_layout();
+		}
 	}
 }
 

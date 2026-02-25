@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +21,10 @@ import 'window_hierarchy.dart';
 
 class WindowManager extends StatefulWidget {
   final List<MonitorConfig> monitors;
+  final List<MonitorConfig> Function(
+    BuildContext context,
+    List<MonitorConfig> backendMonitors,
+  )? monitorLayoutBuilder;
   final Widget Function(BuildContext context, MonitorConfig monitor)? monitorBuilder;
   final Widget Function(BuildContext context, MonitorConfig monitor)? monitorOverlayBuilder;
   final bool enableZenithBackend;
@@ -24,6 +32,7 @@ class WindowManager extends StatefulWidget {
   const WindowManager({
     super.key,
     this.monitors = const [],
+    this.monitorLayoutBuilder,
     this.monitorBuilder,
     this.monitorOverlayBuilder,
     this.enableZenithBackend = true,
@@ -45,12 +54,15 @@ class WindowManagerState extends State<WindowManager> {
   final Map<int, WindowEntry> _backendWindows = {};
   final Map<int, List<ProviderSubscription>> _backendSubscriptions = {};
   final Map<int, VoidCallback> _backendFocusNodeDetachers = {};
+  final Map<int, Size> _lastRequestedBackendSizes = {};
   List<MonitorConfig> _effectiveMonitors = const [];
 
   Widget? _clientCursor;
   ProviderContainer? _backendContainer;
   ProviderSubscription? _windowMappedSubscription;
   ProviderSubscription? _windowUnmappedSubscription;
+  ProviderSubscription? _monitorListSubscription;
+  List<MonitorConfig> _backendMonitorConfigs = const [];
 
   @override
   void initState() {
@@ -73,6 +85,7 @@ class WindowManagerState extends State<WindowManager> {
   void dispose() {
     _windowMappedSubscription?.close();
     _windowUnmappedSubscription?.close();
+    _monitorListSubscription?.close();
     for (final subs in _backendSubscriptions.values) {
       for (final sub in subs) {
         sub.close();
@@ -91,6 +104,14 @@ class WindowManagerState extends State<WindowManager> {
 
     final platformApi = _backendContainer!.read(platformApiProvider.notifier);
     platformApi.init();
+    unawaited(
+      platformApi.requestMonitorsSnapshot().catchError((error) {
+        if (error is PlatformException && error.code == "method_does_not_exist") {
+          return;
+        }
+        throw error;
+      }),
+    );
     platformApi.startWindowsMaximized(false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       platformApi.startupComplete();
@@ -111,6 +132,60 @@ class WindowManagerState extends State<WindowManager> {
         _removeBackendWindow(value);
       }
     });
+
+    final initialMonitors = _backendContainer!.read(backendMonitorListProvider);
+    _setBackendMonitors(
+      initialMonitors.map<MonitorConfig>((monitor) {
+        return MonitorConfig(
+          id: monitor.id,
+          bounds: monitor.bounds,
+          isPrimary: monitor.isPrimary,
+        );
+      }).toList(growable: false),
+    );
+
+    _monitorListSubscription = _backendContainer!.listen(backendMonitorListProvider, (_, next) {
+      _setBackendMonitors(
+        next.map<MonitorConfig>((monitor) {
+          return MonitorConfig(
+            id: monitor.id,
+            bounds: monitor.bounds,
+            isPrimary: monitor.isPrimary,
+          );
+        }).toList(growable: false),
+      );
+    });
+  }
+
+  void _setBackendMonitors(List<MonitorConfig> monitors) {
+    if (_sameMonitorConfigs(_backendMonitorConfigs, monitors)) {
+      return;
+    }
+    if (!mounted) {
+      _backendMonitorConfigs = monitors;
+      return;
+    }
+    setState(() {
+      _backendMonitorConfigs = monitors;
+    });
+  }
+
+  bool _sameMonitorConfigs(List<MonitorConfig> a, List<MonitorConfig> b) {
+    if (identical(a, b)) {
+      return true;
+    }
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].bounds != b[i].bounds ||
+          a[i].margin != b[i].margin ||
+          a[i].isPrimary != b[i].isPrimary) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _addBackendWindow(int viewId) {
@@ -156,6 +231,7 @@ class WindowManagerState extends State<WindowManager> {
 
     final detachFocus = _backendFocusNodeDetachers.remove(viewId);
     detachFocus?.call();
+    _lastRequestedBackendSizes.remove(viewId);
   }
 
   void _attachBackendListeners(int viewId, WindowEntry entry) {
@@ -205,6 +281,8 @@ class WindowManagerState extends State<WindowManager> {
           if (becameMaximized) {
             entry.restoreRectAfterMaximize = entry.windowRect;
             entry.restoreMonitorIdAfterMaximize = entry.monitorId;
+            _prepareBackendMaximizeForWindow(entry);
+            _syncBackendManagedWindowSizes();
           } else if (becameRestored) {
             entry.windowDock = WindowDock.normal;
             final restoreRect = entry.restoreRectAfterMaximize;
@@ -277,8 +355,8 @@ class WindowManagerState extends State<WindowManager> {
   }
 
   void _updateBackendWindowSizeFromState(int viewId, WindowEntry entry) {
-    final visibleBounds = _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
-    if (visibleBounds.size.isEmpty) {
+    final viewportRect = _backendViewportRectForEntry(viewId);
+    if (viewportRect.size.isEmpty) {
       return;
     }
 
@@ -286,9 +364,13 @@ class WindowManagerState extends State<WindowManager> {
     entry.windowRect = Rect.fromLTWH(
       current.left,
       current.top,
-      visibleBounds.width,
-      visibleBounds.height,
+      viewportRect.width,
+      viewportRect.height,
     );
+  }
+
+  Rect _backendViewportRectForEntry(int viewId) {
+    return _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
   }
 
   Offset _computeWindowOffset(ResizeEdge edge, Size oldSize, Size newSize) {
@@ -432,6 +514,118 @@ class WindowManagerState extends State<WindowManager> {
         }
       }
     }
+
+    _prepareBackendMaximizeForWindow(entry);
+  }
+
+  void prepareBackendMaximizeForWindow(WindowEntry entry) {
+    _prepareBackendMaximizeForWindow(entry);
+  }
+
+  MonitorConfig? _monitorForEntry(WindowEntry entry) {
+    if (_effectiveMonitors.isEmpty) {
+      return null;
+    }
+    final id = entry.monitorId;
+    if (id != null) {
+      for (final monitor in _effectiveMonitors) {
+        if (monitor.id == id) {
+          return monitor;
+        }
+      }
+    }
+    return _effectiveMonitors.first;
+  }
+
+  Rect targetRectForWindow(WindowEntry entry) {
+    final monitor = _monitorForEntry(entry);
+    if (monitor == null) {
+      return entry.windowRect;
+    }
+
+    final usable = monitor.usableBounds;
+    if (entry.maximized) {
+      return usable;
+    }
+
+    switch (entry.windowDock) {
+      case WindowDock.topLeft:
+        return Rect.fromLTWH(usable.left, usable.top, usable.width / 2, usable.height / 2);
+      case WindowDock.top:
+        return Rect.fromLTWH(usable.left, usable.top, usable.width, usable.height / 2);
+      case WindowDock.topRight:
+        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top, usable.width / 2, usable.height / 2);
+      case WindowDock.left:
+        return Rect.fromLTWH(usable.left, usable.top, usable.width / 2, usable.height);
+      case WindowDock.right:
+        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top, usable.width / 2, usable.height);
+      case WindowDock.bottomLeft:
+        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2, usable.width / 2, usable.height / 2);
+      case WindowDock.bottom:
+        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2, usable.width, usable.height / 2);
+      case WindowDock.bottomRight:
+        return Rect.fromLTWH(
+          usable.left + usable.width / 2,
+          usable.top + usable.height / 2,
+          usable.width / 2,
+          usable.height / 2,
+        );
+      case WindowDock.normal:
+        return Rect.fromLTWH(
+          entry.windowRect.left,
+          math.max(usable.top, entry.windowRect.top),
+          math.max(entry.minSize.width, entry.windowRect.width),
+          math.max(entry.minSize.height, entry.windowRect.height),
+        );
+    }
+  }
+
+  void _prepareBackendMaximizeForWindow(WindowEntry entry) {
+    final backendViewId = entry.backendViewId;
+    final container = _backendContainer;
+    if (backendViewId == null || container == null) {
+      return;
+    }
+    final monitor = _monitorForEntry(entry);
+    if (monitor == null) {
+      return;
+    }
+    final usable = monitor.usableBounds.size;
+    container.read(platformApiProvider.notifier).maximizedWindowSize(
+      usable.width.round(),
+      usable.height.round(),
+    );
+  }
+
+  void syncBackendWindowGeometry(WindowEntry entry, {bool force = false}) {
+    final backendViewId = entry.backendViewId;
+    final container = _backendContainer;
+    if (backendViewId == null || container == null) {
+      return;
+    }
+    final target = targetRectForWindow(entry);
+    final desiredSize = Size(target.width.roundToDouble(), target.height.roundToDouble());
+    final lastSent = _lastRequestedBackendSizes[backendViewId];
+    if (!force && lastSent != null && lastSent == desiredSize) {
+      return;
+    }
+    container.read(xdgToplevelStatesProvider(backendViewId).notifier).resize(
+          desiredSize.width.round(),
+          desiredSize.height.round(),
+        );
+    _lastRequestedBackendSizes[backendViewId] = desiredSize;
+  }
+
+  void _syncBackendManagedWindowSizes() {
+    if (_backendContainer == null || _effectiveMonitors.isEmpty) {
+      return;
+    }
+    for (final entry in _backendWindows.values) {
+      if (!entry.maximized && entry.windowDock == WindowDock.normal) {
+        continue;
+      }
+      syncBackendWindowGeometry(entry);
+    }
   }
 
   @override
@@ -442,6 +636,7 @@ class WindowManagerState extends State<WindowManager> {
         _effectiveMonitors = monitors;
         _syncRegionKeys(monitors);
         _reconcileWindowMonitorAssignments(monitors);
+        _syncBackendManagedWindowSizes();
 
         final stack = Stack(
           children: [
@@ -497,13 +692,6 @@ class WindowManagerState extends State<WindowManager> {
             // Layer 6: client cursor overlay
             if (_clientCursor != null) ...[
               _clientCursor!,
-              const Positioned.fill(
-                child: MouseRegion(
-                  opaque: false,
-                  hitTestBehavior: HitTestBehavior.translucent,
-                  cursor: SystemMouseCursors.none,
-                ),
-              ),
             ]
           ],
         );
@@ -516,10 +704,6 @@ class WindowManagerState extends State<WindowManager> {
           return stack;
         }
 
-        _backendContainer!.read(platformApiProvider.notifier).maximizedWindowSize(
-              constraints.maxWidth.toInt(),
-              constraints.maxHeight.toInt(),
-            );
         return UncontrolledProviderScope(
           container: _backendContainer!,
           child: stack,
@@ -532,17 +716,27 @@ class WindowManagerState extends State<WindowManager> {
     if (widget.monitors.isNotEmpty) {
       return widget.monitors;
     }
-    return [
-      MonitorConfig(
-        id: _autoMonitorId,
-        bounds: Rect.fromLTWH(
-          0,
-          0,
-          constraints.maxWidth,
-          constraints.maxHeight,
-        ),
-      ),
-    ];
+
+    final backendOrDynamic = _backendMonitorConfigs.isNotEmpty
+        ? _backendMonitorConfigs
+        : [
+            MonitorConfig(
+              id: _autoMonitorId,
+              bounds: Rect.fromLTWH(
+                0,
+                0,
+                constraints.maxWidth,
+                constraints.maxHeight,
+              ),
+              isPrimary: true,
+            ),
+          ];
+
+    final layoutBuilder = widget.monitorLayoutBuilder;
+    if (layoutBuilder != null) {
+      return layoutBuilder(context, backendOrDynamic);
+    }
+    return backendOrDynamic;
   }
 
   void _syncRegionKeys(List<MonitorConfig> monitors) {
@@ -573,12 +767,28 @@ class MonitorConfig {
   final String id;
   final Rect bounds; // Position and size in global coordinates
   final EdgeInsets? margin;
+  final bool isPrimary;
 
   const MonitorConfig({
     required this.id,
     required this.bounds,
     this.margin,
+    this.isPrimary = false,
   });
+
+  MonitorConfig copyWith({
+    String? id,
+    Rect? bounds,
+    EdgeInsets? margin,
+    bool? isPrimary,
+  }) {
+    return MonitorConfig(
+      id: id ?? this.id,
+      bounds: bounds ?? this.bounds,
+      margin: margin ?? this.margin,
+      isPrimary: isPrimary ?? this.isPrimary,
+    );
+  }
 
   /// The usable area inside [bounds] after applying [margin].
   Rect get usableBounds {

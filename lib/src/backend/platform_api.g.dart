@@ -289,6 +289,56 @@ abstract class _$WindowUnmappedStream extends $StreamNotifier<int> {
   }
 }
 
+@ProviderFor(BackendMonitorList)
+final backendMonitorListProvider = BackendMonitorListProvider._();
+
+final class BackendMonitorListProvider
+    extends $NotifierProvider<BackendMonitorList, IList<BackendMonitor>> {
+  BackendMonitorListProvider._()
+      : super(
+          from: null,
+          argument: null,
+          retry: null,
+          name: r'backendMonitorListProvider',
+          isAutoDispose: false,
+          dependencies: null,
+          $allTransitiveDependencies: null,
+        );
+
+  @override
+  String debugGetCreateSourceHash() => _$backendMonitorListHash();
+
+  @$internal
+  @override
+  BackendMonitorList create() => BackendMonitorList();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(IList<BackendMonitor> value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<IList<BackendMonitor>>(value),
+    );
+  }
+}
+
+String _$backendMonitorListHash() =>
+    r'67c497538be45c756099561fd3eb27435521e8f8';
+
+abstract class _$BackendMonitorList extends $Notifier<IList<BackendMonitor>> {
+  IList<BackendMonitor> build();
+  @$mustCallSuper
+  @override
+  void runBuild() {
+    final ref = this.ref as $Ref<IList<BackendMonitor>, IList<BackendMonitor>>;
+    final element = ref.element as $ClassProviderElement<
+        AnyNotifier<IList<BackendMonitor>, IList<BackendMonitor>>,
+        IList<BackendMonitor>,
+        Object?,
+        Object?>;
+    element.handleCreate(ref, build);
+  }
+}
+
 @ProviderFor(PlatformApi)
 final platformApiProvider = PlatformApiProvider._();
 
@@ -321,7 +371,7 @@ final class PlatformApiProvider
   }
 }
 
-String _$platformApiHash() => r'92befcf5de5f308a6e51bc24eed063ea2cda25a1';
+String _$platformApiHash() => r'ffec547725d3449f4e3da3a4433f072fd35aeda1';
 
 abstract class _$PlatformApi extends $Notifier<PlatformApiState> {
   PlatformApiState build();

@@ -23,6 +23,8 @@ class WindowEntry extends ChangeNotifier {
   bool _minimized = false;
   Rect? restoreRectAfterMaximize;
   String? restoreMonitorIdAfterMaximize;
+  Rect? restoreRectAfterDock;
+  String? restoreMonitorIdAfterDock;
   WindowDock _windowDock = WindowDock.normal;
   final bool allowResize;
   ResizeEdge? backendInteractiveResizeEdge;
