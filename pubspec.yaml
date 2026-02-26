@@ -29,7 +29,6 @@ dependencies:
   fast_immutable_collections: ^9.1.5
   visibility_detector: ^0.4.0+2
   arena_listener: ^0.0.1
-  freedesktop_desktop_entry: ^0.6.0
   jovial_svg: ^1.1.15
 
 dev_dependencies:
