@@ -1,21 +1,21 @@
-# Multi-stage Dockerfile for building jdwm_flutter_test with local wlroots
+# Multi-stage Dockerfile for building Flutter desktop app with local wlroots
 # Based on Ubuntu 22.04 for host glibc compatibility
 #
 # Build Requirements:
 #   - Local Flutter SDK (ensure via ./ensure_flutter_clone.sh)
 #   - wlroots source code (included in repo)
-#   - jdwm_flutter_test source code (included in repo)
+#   - Project source code (included in repo)
 #
 # Usage:
-#   ./ensure_flutter_clone.sh                          # Clone jdwm_flutter_test/vendor/flutter_clone/ if missing
-#   docker build -f jdwm_flutter_test/Dockerfile.zenith-wlroots -t zenith-wlroots .
+#   ./ensure_flutter_clone.sh                          # Clone <project_dir>/vendor/flutter_clone/ if missing
+#   docker build -f <project_dir>/Dockerfile.zenith-wlroots -t zenith-wlroots .
 #   docker run --rm -v "$(pwd):/work" zenith-wlroots
 #
-# Output: /work/jdwm_flutter_test/build/jdwm_flutter_test/release/bundle/jdwm_flutter_test (runtime executable)
+# Output: /work/<project_dir>/build/<app_name>/release/bundle/<app_name> (runtime executable)
 
 FROM ubuntu:22.04 AS builder
-ARG APP_NAME=jdwm_flutter_test
-ARG PROJECT_DIR=jdwm_flutter_test
+ARG APP_NAME
+ARG PROJECT_DIR
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -76,15 +76,15 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
 # Set compiler to use gcc/g++
 ENV CC=gcc CXX=g++ CXXFLAGS="-std=c++17"
 
-# Copy and setup Flutter SDK from local jdwm_flutter_test/vendor/flutter_clone/
-COPY jdwm_flutter_test/vendor/flutter_clone /opt/flutter
+# Copy and setup Flutter SDK from local <project_dir>/vendor/flutter_clone/
+COPY ${PROJECT_DIR}/vendor/flutter_clone /opt/flutter
 RUN /opt/flutter/bin/flutter config --enable-linux-desktop && \
     /opt/flutter/bin/flutter precache
 ENV PATH="/opt/flutter/bin:${PATH}"
 
 # Copy source repositories
-COPY jdwm_flutter_test/vendor/wlroots /src/wlroots
-COPY jdwm_flutter_test /src/${PROJECT_DIR}
+COPY ${PROJECT_DIR}/vendor/wlroots /src/wlroots
+COPY ${PROJECT_DIR} /src/${PROJECT_DIR}
 
 WORKDIR /src
 
@@ -194,8 +194,8 @@ RUN test -f /usr/local/lib/x86_64-linux-gnu/libwlroots-0.19.so && \
     ls -lh /usr/local/lib/x86_64-linux-gnu/libwlroots* && \
     echo "wlroots 0.19.0 verified"
 
-# Build jdwm_flutter_test
-RUN echo "=== Building jdwm_flutter_test ===" && \
+# Build application
+RUN echo "=== Building ${APP_NAME} ===" && \
     bash -lc '\
       set -euo pipefail; \
       cd /src/${PROJECT_DIR}; \
@@ -216,9 +216,9 @@ RUN echo "=== Building jdwm_flutter_test ===" && \
       fi; \
       export WLR_ROOT=/usr/local; \
       export PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}; \
-      make release_bundle WLR_ROOT=/usr/local WLR_SRC_ROOT=/src/wlroots; \
+      make release_bundle APP_NAME=${APP_NAME} WLR_ROOT=/usr/local WLR_SRC_ROOT=/src/wlroots; \
     ' && \
-    echo "jdwm_flutter_test build complete"
+    echo "${APP_NAME} build complete"
 
 # Collect all runtime libraries into release bundle
 RUN mkdir -p /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/lib && \
@@ -241,8 +241,8 @@ RUN echo "=== Release bundle ===" && \
 
 # Final stage: just Ubuntu 22.04 for extracting the bundle
 FROM ubuntu:22.04
-ARG APP_NAME=jdwm_flutter_test
-ARG PROJECT_DIR=jdwm_flutter_test
+ARG APP_NAME
+ARG PROJECT_DIR
 
 COPY --from=builder /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle /app/${APP_NAME}
 

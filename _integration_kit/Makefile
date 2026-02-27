@@ -5,7 +5,7 @@ CXX := clang++ -std=c++17 -stdlib=libc++
 FLUTTER := flutter
 BUILD_CONFIG := build_config.env
 -include $(BUILD_CONFIG)
-APP_NAME ?= jdwm_flutter_test
+APP_NAME ?= $(notdir $(CURDIR))
 
 uname_m = $(shell uname -m)
 ifeq ($(uname_m),x86_64)
@@ -57,6 +57,17 @@ WARNINGS := -Wall -Wextra -Werror \
 BUILD_VERSION ?= local
 BUILD_GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
 BUILD_TIMESTAMP ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+FLUTTER_VERSION_JSON := $(shell $(FLUTTER) --version --machine 2>/dev/null | tr -d '\n')
+FLUTTER_ROOT_FROM_MACHINE := $(shell printf '%s' '$(FLUTTER_VERSION_JSON)' | sed -n 's/.*"flutterRoot"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+FLUTTER_BIN_PATH := $(shell command -v $(FLUTTER) 2>/dev/null || true)
+FLUTTER_ROOT_FROM_BIN := $(patsubst %/bin/flutter,%,$(FLUTTER_BIN_PATH))
+FLUTTER_ROOT := $(if $(FLUTTER_ROOT_FROM_MACHINE),$(FLUTTER_ROOT_FROM_MACHINE),$(if $(FLUTTER_ROOT_FROM_BIN),$(FLUTTER_ROOT_FROM_BIN),$(abspath vendor/flutter_clone)))
+ENGINE_REVISION_FROM_MACHINE := $(shell printf '%s' '$(FLUTTER_VERSION_JSON)' | sed -n 's/.*"engineRevision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+ENGINE_REVISION_FROM_FILE := $(shell cat "$(FLUTTER_ROOT)/bin/internal/engine.version" 2>/dev/null || true)
+ENGINE_REVISION := $(if $(ENGINE_REVISION_FROM_MACHINE),$(ENGINE_REVISION_FROM_MACHINE),$(strip $(ENGINE_REVISION_FROM_FILE)))
+SONY_ENGINE_RELEASE ?= $(if $(ENGINE_REVISION),$(shell printf '%s' "$(ENGINE_REVISION)" | cut -c1-10),9064459a8b)
+ENGINE_STAMP := $(DEPS_DIR)/.flutter_engine_$(SONY_ENGINE_RELEASE)_$(ARCH).stamp
+ENGINE_TMP_DIR := $(DEPS_DIR)/.engine_tmp
 
 WLR_INC_SUBDIR ?= wlroots-0.19
 
@@ -93,23 +104,51 @@ DEBUG_LDFLAGS += -L$(BACKEND_BUILD_DIR)/debug -lzenith_backend
 PROFILE_LDFLAGS += -L$(BACKEND_BUILD_DIR)/profile -lzenith_backend
 RELEASE_LDFLAGS += -L$(BACKEND_BUILD_DIR)/release -lzenith_backend
 
-$(DEPS_DIR)/libflutter_engine_debug.so:
-	curl -L https://github.com/sony/flutter-embedded-linux/releases/download/9064459a8b/elinux-$(ARCH)-debug.zip >/tmp/elinux-$(ARCH)-debug.zip
-	unzip -o /tmp/elinux-$(ARCH)-debug.zip -d /tmp || exit
-	mkdir -p $(DEPS_DIR)
-	mv /tmp/libflutter_engine.so $(DEPS_DIR)/libflutter_engine_debug.so
+$(ENGINE_STAMP):
+	mkdir -p $(DEPS_DIR) $(ENGINE_TMP_DIR)
+	touch $(ENGINE_STAMP)
 
-$(DEPS_DIR)/libflutter_engine_profile.so:
-	curl -L https://github.com/sony/flutter-embedded-linux/releases/download/9064459a8b/elinux-$(ARCH)-profile.zip >/tmp/elinux-$(ARCH)-profile.zip
-	unzip -o /tmp/elinux-$(ARCH)-profile.zip -d /tmp || exit
-	mkdir -p $(DEPS_DIR)
-	mv /tmp/libflutter_engine.so $(DEPS_DIR)/libflutter_engine_profile.so
+$(DEPS_DIR)/libflutter_engine_debug.so: $(ENGINE_STAMP)
+	mkdir -p $(DEPS_DIR) $(ENGINE_TMP_DIR)
+	@curl -fL "https://github.com/sony/flutter-embedded-linux/releases/download/$(SONY_ENGINE_RELEASE)/elinux-$(ARCH)-debug.zip" -o "$(ENGINE_TMP_DIR)/elinux-$(ARCH)-debug.zip" || { \
+	  echo "Failed to download Sony Flutter engine release $(SONY_ENGINE_RELEASE) (debug, $(ARCH))."; \
+	  echo "Set SONY_ENGINE_RELEASE in build_config.env to a compatible release tag if needed."; \
+	  exit 1; \
+	}
+	unzip -o "$(ENGINE_TMP_DIR)/elinux-$(ARCH)-debug.zip" -d "$(ENGINE_TMP_DIR)" >/dev/null
+	@if [ ! -f "$(ENGINE_TMP_DIR)/libflutter_engine.so" ]; then \
+	  echo "Archive for $(SONY_ENGINE_RELEASE) did not contain libflutter_engine.so"; \
+	  exit 1; \
+	fi
+	mv -f "$(ENGINE_TMP_DIR)/libflutter_engine.so" "$(DEPS_DIR)/libflutter_engine_debug.so"
 
-$(DEPS_DIR)/libflutter_engine_release.so:
-	curl -L https://github.com/sony/flutter-embedded-linux/releases/download/9064459a8b/elinux-$(ARCH)-release.zip >/tmp/elinux-$(ARCH)-release.zip
-	unzip -o /tmp/elinux-$(ARCH)-release.zip -d /tmp || exit
-	mkdir -p $(DEPS_DIR)
-	mv /tmp/libflutter_engine.so $(DEPS_DIR)/libflutter_engine_release.so
+$(DEPS_DIR)/libflutter_engine_profile.so: $(ENGINE_STAMP)
+	mkdir -p $(DEPS_DIR) $(ENGINE_TMP_DIR)
+	@curl -fL "https://github.com/sony/flutter-embedded-linux/releases/download/$(SONY_ENGINE_RELEASE)/elinux-$(ARCH)-profile.zip" -o "$(ENGINE_TMP_DIR)/elinux-$(ARCH)-profile.zip" || { \
+	  echo "Failed to download Sony Flutter engine release $(SONY_ENGINE_RELEASE) (profile, $(ARCH))."; \
+	  echo "Set SONY_ENGINE_RELEASE in build_config.env to a compatible release tag if needed."; \
+	  exit 1; \
+	}
+	unzip -o "$(ENGINE_TMP_DIR)/elinux-$(ARCH)-profile.zip" -d "$(ENGINE_TMP_DIR)" >/dev/null
+	@if [ ! -f "$(ENGINE_TMP_DIR)/libflutter_engine.so" ]; then \
+	  echo "Archive for $(SONY_ENGINE_RELEASE) did not contain libflutter_engine.so"; \
+	  exit 1; \
+	fi
+	mv -f "$(ENGINE_TMP_DIR)/libflutter_engine.so" "$(DEPS_DIR)/libflutter_engine_profile.so"
+
+$(DEPS_DIR)/libflutter_engine_release.so: $(ENGINE_STAMP)
+	mkdir -p $(DEPS_DIR) $(ENGINE_TMP_DIR)
+	@curl -fL "https://github.com/sony/flutter-embedded-linux/releases/download/$(SONY_ENGINE_RELEASE)/elinux-$(ARCH)-release.zip" -o "$(ENGINE_TMP_DIR)/elinux-$(ARCH)-release.zip" || { \
+	  echo "Failed to download Sony Flutter engine release $(SONY_ENGINE_RELEASE) (release, $(ARCH))."; \
+	  echo "Set SONY_ENGINE_RELEASE in build_config.env to a compatible release tag if needed."; \
+	  exit 1; \
+	}
+	unzip -o "$(ENGINE_TMP_DIR)/elinux-$(ARCH)-release.zip" -d "$(ENGINE_TMP_DIR)" >/dev/null
+	@if [ ! -f "$(ENGINE_TMP_DIR)/libflutter_engine.so" ]; then \
+	  echo "Archive for $(SONY_ENGINE_RELEASE) did not contain libflutter_engine.so"; \
+	  exit 1; \
+	fi
+	mv -f "$(ENGINE_TMP_DIR)/libflutter_engine.so" "$(DEPS_DIR)/libflutter_engine_release.so"
 
 $(DEBUG_BUNDLE_DIR)/$(TARGET_EXEC): $(DEBUG_OBJS) $(DEPS_DIR)/libflutter_engine_debug.so $(BACKEND_DEBUG_LIB)
 	mkdir -p $(dir $@)
@@ -169,12 +208,15 @@ $(RELEASE_BUILD_DIR)/%.cc.o: %.cc Makefile
 	$(CXX) $(RELEASE_CPPFLAGS) -stdlib=libc++ $(CXXFLAGS) -c $< -o $@
 
 flutter_debug:
+	mkdir -p build/native_assets/linux
 	$(FLUTTER) build linux --debug
 
 flutter_profile:
+	mkdir -p build/native_assets/linux
 	$(FLUTTER) build linux --profile
 
 flutter_release:
+	mkdir -p build/native_assets/linux
 	$(FLUTTER) build linux --release
 
 debug_bundle: flutter_debug $(DEBUG_BUNDLE_DIR)/$(TARGET_EXEC)
