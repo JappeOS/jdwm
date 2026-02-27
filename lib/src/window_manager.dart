@@ -25,8 +25,10 @@ class WindowManager extends StatefulWidget {
     BuildContext context,
     List<MonitorConfig> backendMonitors,
   )? monitorLayoutBuilder;
-  final Widget Function(BuildContext context, MonitorConfig monitor)? monitorBuilder;
-  final Widget Function(BuildContext context, MonitorConfig monitor)? monitorOverlayBuilder;
+  final Widget Function(BuildContext context, MonitorConfig monitor)?
+      monitorBuilder;
+  final Widget Function(BuildContext context, MonitorConfig monitor)?
+      monitorOverlayBuilder;
   final bool enableZenithBackend;
 
   const WindowManager({
@@ -55,6 +57,7 @@ class WindowManagerState extends State<WindowManager> {
   final Map<int, List<ProviderSubscription>> _backendSubscriptions = {};
   final Map<int, VoidCallback> _backendFocusNodeDetachers = {};
   final Map<int, Size> _lastRequestedBackendSizes = {};
+  final Set<int> _backendInitialPlacementDone = {};
   List<MonitorConfig> _effectiveMonitors = const [];
 
   Widget? _clientCursor;
@@ -106,7 +109,8 @@ class WindowManagerState extends State<WindowManager> {
     platformApi.init();
     unawaited(
       platformApi.requestMonitorsSnapshot().catchError((error) {
-        if (error is PlatformException && error.code == "method_does_not_exist") {
+        if (error is PlatformException &&
+            error.code == "method_does_not_exist") {
           return;
         }
         throw error;
@@ -122,12 +126,14 @@ class WindowManagerState extends State<WindowManager> {
       _addBackendWindow(viewId);
     }
 
-    _windowMappedSubscription = _backendContainer!.listen(windowMappedStreamProvider, (_, next) {
+    _windowMappedSubscription =
+        _backendContainer!.listen(windowMappedStreamProvider, (_, next) {
       if (next case AsyncData<int>(:final value)) {
         _addBackendWindow(value);
       }
     });
-    _windowUnmappedSubscription = _backendContainer!.listen(windowUnmappedStreamProvider, (_, next) {
+    _windowUnmappedSubscription =
+        _backendContainer!.listen(windowUnmappedStreamProvider, (_, next) {
       if (next case AsyncData<int>(:final value)) {
         _removeBackendWindow(value);
       }
@@ -144,7 +150,8 @@ class WindowManagerState extends State<WindowManager> {
       }).toList(growable: false),
     );
 
-    _monitorListSubscription = _backendContainer!.listen(backendMonitorListProvider, (_, next) {
+    _monitorListSubscription =
+        _backendContainer!.listen(backendMonitorListProvider, (_, next) {
       _setBackendMonitors(
         next.map<MonitorConfig>((monitor) {
           return MonitorConfig(
@@ -232,11 +239,13 @@ class WindowManagerState extends State<WindowManager> {
     final detachFocus = _backendFocusNodeDetachers.remove(viewId);
     detachFocus?.call();
     _lastRequestedBackendSizes.remove(viewId);
+    _backendInitialPlacementDone.remove(viewId);
   }
 
   void _attachBackendListeners(int viewId, WindowEntry entry) {
     final subs = <ProviderSubscription>[];
-    final focusNode = _backendContainer!.read(xdgToplevelStatesProvider(viewId)).focusNode;
+    final focusNode =
+        _backendContainer!.read(xdgToplevelStatesProvider(viewId)).focusNode;
     void onFocusChange() {
       if (!mounted) {
         return;
@@ -245,6 +254,7 @@ class WindowManagerState extends State<WindowManager> {
         requestFocus(entry);
       }
     }
+
     focusNode.addListener(onFocusChange);
     _backendFocusNodeDetachers[viewId] = () {
       focusNode.removeListener(onFocusChange);
@@ -291,7 +301,8 @@ class WindowManagerState extends State<WindowManager> {
               if (backendViewId != null) {
                 _backendContainer!
                     .read(xdgToplevelStatesProvider(backendViewId).notifier)
-                    .resize(restoreRect.width.round(), restoreRect.height.round());
+                    .resize(
+                        restoreRect.width.round(), restoreRect.height.round());
               }
               entry.windowRect = restoreRect;
               entry.restoreRectAfterMaximize = null;
@@ -335,19 +346,31 @@ class WindowManagerState extends State<WindowManager> {
           var top = current.top;
 
           final edge = entry.backendInteractiveResizeEdge;
-          if (edge != null && previous != null && previous.size.isEmpty == false) {
+          if (edge != null &&
+              previous != null &&
+              previous.size.isEmpty == false) {
             final offset = _computeWindowOffset(edge, previous.size, next.size);
             left += offset.dx;
             top += offset.dy;
           }
 
-          entry.windowRect = Rect.fromLTWH(
+          final nextRect = Rect.fromLTWH(
             left,
             top,
             next.width,
             next.height,
           );
+          if (!_backendInitialPlacementDone.contains(viewId)) {
+            final placed =
+                _applyInitialBackendWindowPlacement(entry, size: nextRect.size);
+            if (placed) {
+              _backendInitialPlacementDone.add(viewId);
+              return;
+            }
+          }
+          entry.windowRect = _clampRectToMonitorUsableBounds(entry, nextRect);
         },
+        fireImmediately: true,
       ),
     );
 
@@ -370,7 +393,9 @@ class WindowManagerState extends State<WindowManager> {
   }
 
   Rect _backendViewportRectForEntry(int viewId) {
-    return _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
+    return _backendContainer!
+        .read(xdgSurfaceStatesProvider(viewId))
+        .visibleBounds;
   }
 
   Offset _computeWindowOffset(ResizeEdge edge, Size oldSize, Size newSize) {
@@ -404,8 +429,9 @@ class WindowManagerState extends State<WindowManager> {
 
   /// Look up a [MonitorConfig] by id.
   MonitorConfig? getMonitorById(String id) {
+    final monitors = _monitorsForPlacement();
     try {
-      return _effectiveMonitors.firstWhere((m) => m.id == id);
+      return monitors.firstWhere((m) => m.id == id);
     } on StateError {
       return null;
     }
@@ -440,21 +466,24 @@ class WindowManagerState extends State<WindowManager> {
     if (_backendContainer == null) {
       return;
     }
-    await _backendContainer!.read(platformApiProvider.notifier).setCursorVisible(visible);
+    await _backendContainer!
+        .read(platformApiProvider.notifier)
+        .setCursorVisible(visible);
   }
 
   Future<void> lockCursor(bool locked) async {
     if (_backendContainer == null) {
       return;
     }
-    await _backendContainer!.read(platformApiProvider.notifier).lockCursor(locked);
+    await _backendContainer!
+        .read(platformApiProvider.notifier)
+        .lockCursor(locked);
   }
 
   void pushWindow(WindowEntry entry, {String? monitorId}) {
+    final monitors = _monitorsForPlacement();
     final targetMonitorId = monitorId ??
-        (_effectiveMonitors.isNotEmpty
-            ? _effectiveMonitors.first.id
-            : (widget.monitors.isNotEmpty ? widget.monitors.first.id : null));
+        (monitors.isNotEmpty ? _preferredPrimaryMonitor(monitors).id : null);
     if (targetMonitorId != null) {
       entry.monitorId = targetMonitorId;
     }
@@ -466,8 +495,8 @@ class WindowManagerState extends State<WindowManager> {
     if (hierarchy == null) {
       return;
     }
-    final wasFocused =
-        hierarchy.entriesByFocus.isNotEmpty && hierarchy.entriesByFocus.last == entry;
+    final wasFocused = hierarchy.entriesByFocus.isNotEmpty &&
+        hierarchy.entriesByFocus.last == entry;
     hierarchy.popWindowEntry(entry);
 
     if (wasFocused) {
@@ -503,7 +532,8 @@ class WindowManagerState extends State<WindowManager> {
 
     final targetViewId = entry.backendViewId;
     for (final viewId in _backendWindows.keys) {
-      final focusNode = container.read(xdgToplevelStatesProvider(viewId)).focusNode;
+      final focusNode =
+          container.read(xdgToplevelStatesProvider(viewId)).focusNode;
       if (targetViewId != null && viewId == targetViewId) {
         if (!focusNode.hasFocus) {
           focusNode.requestFocus();
@@ -523,18 +553,19 @@ class WindowManagerState extends State<WindowManager> {
   }
 
   MonitorConfig? _monitorForEntry(WindowEntry entry) {
-    if (_effectiveMonitors.isEmpty) {
+    final monitors = _monitorsForPlacement();
+    if (monitors.isEmpty) {
       return null;
     }
     final id = entry.monitorId;
     if (id != null) {
-      for (final monitor in _effectiveMonitors) {
+      for (final monitor in monitors) {
         if (monitor.id == id) {
           return monitor;
         }
       }
     }
-    return _effectiveMonitors.first;
+    return _preferredPrimaryMonitor(monitors);
   }
 
   Rect targetRectForWindow(WindowEntry entry) {
@@ -550,19 +581,26 @@ class WindowManagerState extends State<WindowManager> {
 
     switch (entry.windowDock) {
       case WindowDock.topLeft:
-        return Rect.fromLTWH(usable.left, usable.top, usable.width / 2, usable.height / 2);
+        return Rect.fromLTWH(
+            usable.left, usable.top, usable.width / 2, usable.height / 2);
       case WindowDock.top:
-        return Rect.fromLTWH(usable.left, usable.top, usable.width, usable.height / 2);
+        return Rect.fromLTWH(
+            usable.left, usable.top, usable.width, usable.height / 2);
       case WindowDock.topRight:
-        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top, usable.width / 2, usable.height / 2);
+        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top,
+            usable.width / 2, usable.height / 2);
       case WindowDock.left:
-        return Rect.fromLTWH(usable.left, usable.top, usable.width / 2, usable.height);
+        return Rect.fromLTWH(
+            usable.left, usable.top, usable.width / 2, usable.height);
       case WindowDock.right:
-        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top, usable.width / 2, usable.height);
+        return Rect.fromLTWH(usable.left + usable.width / 2, usable.top,
+            usable.width / 2, usable.height);
       case WindowDock.bottomLeft:
-        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2, usable.width / 2, usable.height / 2);
+        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2,
+            usable.width / 2, usable.height / 2);
       case WindowDock.bottom:
-        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2, usable.width, usable.height / 2);
+        return Rect.fromLTWH(usable.left, usable.top + usable.height / 2,
+            usable.width, usable.height / 2);
       case WindowDock.bottomRight:
         return Rect.fromLTWH(
           usable.left + usable.width / 2,
@@ -592,9 +630,9 @@ class WindowManagerState extends State<WindowManager> {
     }
     final usable = monitor.usableBounds.size;
     container.read(platformApiProvider.notifier).maximizedWindowSize(
-      usable.width.round(),
-      usable.height.round(),
-    );
+          usable.width.round(),
+          usable.height.round(),
+        );
   }
 
   void syncBackendWindowGeometry(WindowEntry entry, {bool force = false}) {
@@ -604,7 +642,8 @@ class WindowManagerState extends State<WindowManager> {
       return;
     }
     final target = targetRectForWindow(entry);
-    final desiredSize = Size(target.width.roundToDouble(), target.height.roundToDouble());
+    final desiredSize =
+        Size(target.width.roundToDouble(), target.height.roundToDouble());
     final lastSent = _lastRequestedBackendSizes[backendViewId];
     if (!force && lastSent != null && lastSent == desiredSize) {
       return;
@@ -628,6 +667,129 @@ class WindowManagerState extends State<WindowManager> {
     }
   }
 
+  List<MonitorConfig> _monitorsForPlacement() {
+    if (_effectiveMonitors.isNotEmpty) {
+      return _effectiveMonitors;
+    }
+    if (_backendMonitorConfigs.isNotEmpty) {
+      return _backendMonitorConfigs;
+    }
+    if (widget.monitors.isNotEmpty) {
+      return widget.monitors;
+    }
+    return const [];
+  }
+
+  MonitorConfig _preferredPrimaryMonitor(List<MonitorConfig> monitors) {
+    for (final monitor in monitors) {
+      if (monitor.isPrimary) {
+        return monitor;
+      }
+    }
+    return monitors.first;
+  }
+
+  MonitorConfig? _focusedMonitor(List<MonitorConfig> monitors) {
+    final focused = _hierarchyKey.currentState?.entriesByFocus.lastOrNull;
+    if (focused == null) {
+      return null;
+    }
+    final focusedMonitorId = focused.monitorId;
+    if (focusedMonitorId == null) {
+      return null;
+    }
+    for (final monitor in monitors) {
+      if (monitor.id == focusedMonitorId) {
+        return monitor;
+      }
+    }
+    return null;
+  }
+
+  Rect _clampRectToMonitorUsableBounds(WindowEntry entry, Rect rect) {
+    final monitor = _monitorForEntry(entry);
+    if (monitor == null) {
+      return rect;
+    }
+    final usable = monitor.usableBounds;
+    if (usable.width <= 0 || usable.height <= 0) {
+      return rect;
+    }
+
+    final maxLeft = math.max(usable.left, usable.right - rect.width);
+    final maxTop = math.max(usable.top, usable.bottom - rect.height);
+    final clampedLeft = rect.left.clamp(usable.left, maxLeft).toDouble();
+    final clampedTop = rect.top.clamp(usable.top, maxTop).toDouble();
+    return Rect.fromLTWH(
+      clampedLeft,
+      clampedTop,
+      rect.width,
+      rect.height,
+    );
+  }
+
+  bool _applyInitialBackendWindowPlacement(WindowEntry entry, {Size? size}) {
+    final monitors = _monitorsForPlacement();
+    if (monitors.isEmpty) {
+      return false;
+    }
+
+    var selectedMonitor =
+        entry.monitorId != null ? getMonitorById(entry.monitorId!) : null;
+    selectedMonitor ??= _focusedMonitor(monitors);
+    selectedMonitor ??= _preferredPrimaryMonitor(monitors);
+    entry.monitorId = selectedMonitor.id;
+
+    final windowSize = size ?? entry.windowRect.size;
+    final usable = selectedMonitor.usableBounds;
+    final windowsOnMonitor = getWindowsOnMonitor(selectedMonitor.id)
+        .where((window) => window.id != entry.id)
+        .length;
+
+    Rect preferredRect;
+    if (windowsOnMonitor == 0) {
+      preferredRect = Rect.fromLTWH(
+        usable.left + ((usable.width - windowSize.width) / 2),
+        usable.top + ((usable.height - windowSize.height) / 2),
+        windowSize.width,
+        windowSize.height,
+      );
+    } else {
+      const cascadeX = 28.0;
+      const cascadeY = 24.0;
+      final cascadeStep = (windowsOnMonitor - 1) % 10;
+      preferredRect = Rect.fromLTWH(
+        usable.left + cascadeX * (cascadeStep + 1),
+        usable.top + cascadeY * (cascadeStep + 1),
+        windowSize.width,
+        windowSize.height,
+      );
+    }
+
+    entry.windowRect = _clampRectToMonitorUsableBounds(entry, preferredRect);
+    return true;
+  }
+
+  void _applyPendingInitialBackendWindowPlacements() {
+    if (_backendContainer == null) {
+      return;
+    }
+    for (final backendEntry in _backendWindows.entries) {
+      final viewId = backendEntry.key;
+      if (_backendInitialPlacementDone.contains(viewId)) {
+        continue;
+      }
+      final viewportRect = _backendViewportRectForEntry(viewId);
+      final placed = _applyInitialBackendWindowPlacement(
+        backendEntry.value,
+        size: viewportRect.size.isEmpty ? null : viewportRect.size,
+      );
+      if (placed) {
+        _backendInitialPlacementDone.add(viewId);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -636,6 +798,7 @@ class WindowManagerState extends State<WindowManager> {
         _effectiveMonitors = monitors;
         _syncRegionKeys(monitors);
         _reconcileWindowMonitorAssignments(monitors);
+        _applyPendingInitialBackendWindowPlacements();
         _syncBackendManagedWindowSizes();
 
         final stack = Stack(
@@ -753,7 +916,8 @@ class WindowManagerState extends State<WindowManager> {
     }
     final defaultMonitorId = monitors.first.id;
     final monitorIds = monitors.map((m) => m.id).toSet();
-    for (final window in _hierarchyKey.currentState?.windows ?? const <WindowEntry>[]) {
+    for (final window
+        in _hierarchyKey.currentState?.windows ?? const <WindowEntry>[]) {
       final id = window.monitorId;
       if (id == null || !monitorIds.contains(id)) {
         window.monitorId = defaultMonitorId;

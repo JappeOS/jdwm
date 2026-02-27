@@ -37,12 +37,16 @@ class WindowMappedStream extends _$WindowMappedStream {
 
 @Riverpod(keepAlive: true)
 Stream<dynamic> _textInputEventStreamById(Ref ref, int viewId) {
-  return ref.watch(platformApiProvider).textInputEventsStream.where((event) => event["view_id"] == viewId);
+  return ref
+      .watch(platformApiProvider)
+      .textInputEventsStream
+      .where((event) => event["view_id"] == viewId);
 }
 
 @Riverpod(keepAlive: true)
 Future<TextInputEventType> textInputEventStream(Ref ref, int viewId) async {
-  dynamic event = await ref.watch(_textInputEventStreamByIdProvider(viewId).future);
+  dynamic event =
+      await ref.watch(_textInputEventStreamByIdProvider(viewId).future);
   switch (event["type"]) {
     case "enable":
       return TextInputEnable();
@@ -51,7 +55,8 @@ Future<TextInputEventType> textInputEventStream(Ref ref, int viewId) async {
     case "commit":
       return TextInputCommit();
     default:
-      throw ArgumentError.value(event["type"], "Must be 'enable', 'disable', or 'commit'", "event['type']");
+      throw ArgumentError.value(event["type"],
+          "Must be 'enable', 'disable', or 'commit'", "event['type']");
   }
 }
 
@@ -236,7 +241,9 @@ class PlatformApi extends _$PlatformApi {
   }
 
   Stream<TextInputEventType> getTextInputEventsForViewId(int viewId) {
-    return state.textInputEventsStream.where((event) => event["view_id"] == viewId).map((event) {
+    return state.textInputEventsStream
+        .where((event) => event["view_id"] == viewId)
+        .map((event) {
       switch (event["type"]) {
         case "enable":
           return TextInputEnable();
@@ -245,7 +252,8 @@ class PlatformApi extends _$PlatformApi {
         case "commit":
           return TextInputCommit();
         default:
-          throw ArgumentError.value(event["type"], "Must be 'enable', 'disable', or 'commit'", "event['type']");
+          throw ArgumentError.value(event["type"],
+              "Must be 'enable', 'disable', or 'commit'", "event['type']");
       }
     });
   }
@@ -257,13 +265,15 @@ class PlatformApi extends _$PlatformApi {
   }
 
   Future<AuthenticationResponse> unlockSession(String password) async {
-    Map<String, dynamic>? response = await state.platform.invokeMapMethod("unlock_session", {
+    Map<String, dynamic>? response =
+        await state.platform.invokeMapMethod("unlock_session", {
       "password": password,
     });
     if (response == null) {
       return AuthenticationResponse(false, "");
     }
-    return AuthenticationResponse(response["success"] as bool, response["message"] as String);
+    return AuthenticationResponse(
+        response["success"] as bool, response["message"] as String);
   }
 
   /// The display will not generate frame events anymore if it's disabled, meaning that rendering is stopped.
@@ -314,7 +324,9 @@ class PlatformApi extends _$PlatformApi {
       subsurfaceIdsBelow.add(id);
 
       var position = Offset(x.toDouble(), y.toDouble());
-      ref.read(subsurfaceStatesProvider(id).notifier).commit(position: position);
+      ref
+          .read(subsurfaceStatesProvider(id).notifier)
+          .commit(position: position);
     }
 
     for (dynamic subsurface in subsurfacesAbove) {
@@ -325,7 +337,9 @@ class PlatformApi extends _$PlatformApi {
       subsurfaceIdsAbove.add(id);
 
       var position = Offset(x.toDouble(), y.toDouble());
-      ref.read(subsurfaceStatesProvider(id).notifier).commit(position: position);
+      ref
+          .read(subsurfaceStatesProvider(id).notifier)
+          .commit(position: position);
     }
 
     ref.read(surfaceStatesProvider(viewId).notifier).commit(
@@ -376,7 +390,9 @@ class PlatformApi extends _$PlatformApi {
     if (hasToplevelDecoration) {
       int toplevelDecorationInt = event["toplevel_decoration"];
       var decoration = ToplevelDecoration.fromInt(toplevelDecorationInt);
-      ref.read(xdgToplevelStatesProvider(viewId).notifier).setDecoration(decoration);
+      ref
+          .read(xdgToplevelStatesProvider(viewId).notifier)
+          .setDecoration(decoration);
     }
 
     bool hasToplevelTitle = event["has_toplevel_title"];
@@ -434,8 +450,9 @@ class PlatformApi extends _$PlatformApi {
         state.windowUnmappedSink.add(viewId);
         break;
       case XdgSurfaceRole.popup:
-        await ref.read(xdgPopupStatesProvider(viewId).notifier).animateClosing();
-        unregisterViewTexture(ref.read(surfaceStatesProvider(viewId)).textureId);
+        await ref
+            .read(xdgPopupStatesProvider(viewId).notifier)
+            .animateClosing();
         ref.read(popupStackChildrenProvider.notifier).remove(viewId);
         break;
     }
@@ -460,14 +477,18 @@ class PlatformApi extends _$PlatformApi {
 
   void _interactiveMove(dynamic event) {
     int viewId = event["view_id"];
-    ref.read(xdgToplevelStatesProvider(viewId).notifier).requestInteractiveMove();
+    ref
+        .read(xdgToplevelStatesProvider(viewId).notifier)
+        .requestInteractiveMove();
   }
 
   void _interactiveResize(dynamic event) {
     int viewId = event["view_id"];
     int edge = event["edge"];
     ResizeEdge resizeEdge = ResizeEdge.fromInt(edge);
-    ref.read(xdgToplevelStatesProvider(viewId).notifier).requestInteractiveResize(resizeEdge);
+    ref
+        .read(xdgToplevelStatesProvider(viewId).notifier)
+        .requestInteractiveResize(resizeEdge);
   }
 
   void _setTitle(dynamic event) {
@@ -504,7 +525,11 @@ class PlatformApi extends _$PlatformApi {
         final dynamic width = monitor["width"];
         final dynamic height = monitor["height"];
         final dynamic isPrimary = monitor["is_primary"];
-        if (id == null || x == null || y == null || width == null || height == null) {
+        if (id == null ||
+            x == null ||
+            y == null ||
+            width == null ||
+            height == null) {
           continue;
         }
 
@@ -541,7 +566,8 @@ class PlatformApi extends _$PlatformApi {
 }
 
 class PlatformApiState {
-  final _textInputEventsStreamController = StreamController<dynamic>.broadcast();
+  final _textInputEventsStreamController =
+      StreamController<dynamic>.broadcast();
   late final Stream<dynamic> textInputEventsStream;
   late final Sink<dynamic> textInputEventsSink;
 

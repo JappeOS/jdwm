@@ -35,7 +35,8 @@ class XdgPopupController {
       parentViewId: parentViewId,
       position: position,
       animationsKey: state.animationsKey,
-      isClosing: state.isClosing,
+      // A new commit while mapped means the popup is active again.
+      isClosing: false,
     );
   }
 

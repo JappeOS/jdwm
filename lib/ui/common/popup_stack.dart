@@ -14,7 +14,8 @@ class PopupStack extends ConsumerWidget {
     return Stack(
       key: ref.watch(popupStackGlobalKeyProvider),
       children: [
-        for (int viewId in ref.watch(popupStackChildrenProvider)) ref.watch(popupWidgetProvider(viewId)),
+        for (int viewId in ref.watch(popupStackChildrenProvider))
+          ref.watch(popupWidgetProvider(viewId)),
       ],
     );
   }
@@ -30,7 +31,12 @@ class PopupStackChildren extends _$PopupStackChildren {
     return IList();
   }
 
-  void add(int viewId) => state = state.add(viewId);
+  void add(int viewId) {
+    if (state.contains(viewId)) {
+      return;
+    }
+    state = state.add(viewId);
+  }
 
   void remove(int viewId) => state = state.remove(viewId);
 }
