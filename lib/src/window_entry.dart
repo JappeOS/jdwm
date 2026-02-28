@@ -28,6 +28,7 @@ class WindowEntry extends ChangeNotifier {
   WindowDock _windowDock = WindowDock.normal;
   final bool allowResize;
   ResizeEdge? backendInteractiveResizeEdge;
+  double backendContentInsetTop = 0;
 
   final GlobalKey repaintBoundaryKey = GlobalKey();
 
@@ -58,7 +59,8 @@ class WindowEntry extends ChangeNotifier {
   }
 
   set usesToolbar(bool value) {
-    _chromeMode = value ? WindowChromeMode.decorated : WindowChromeMode.borderless;
+    _chromeMode =
+        value ? WindowChromeMode.decorated : WindowChromeMode.borderless;
     notifyListeners();
   }
 
@@ -113,7 +115,10 @@ class WindowEntry extends ChangeNotifier {
   })  : id = WindowEntryId(),
         _title = title,
         _icon = icon,
-        _chromeMode = chromeMode ?? (usesToolbar ? WindowChromeMode.decorated : WindowChromeMode.borderless) {
+        _chromeMode = chromeMode ??
+            (usesToolbar
+                ? WindowChromeMode.decorated
+                : WindowChromeMode.borderless) {
     windowRect = Rect.fromLTWH(
       0,
       0,
@@ -151,8 +156,7 @@ class WindowEntryId {
   final int _id = _nextId++;
 
   @override
-  bool operator ==(Object other) =>
-      other is WindowEntryId && _id == other._id;
+  bool operator ==(Object other) => other is WindowEntryId && _id == other._id;
 
   @override
   int get hashCode => _id;

@@ -51,6 +51,36 @@ ZenithXdgToplevel::~ZenithXdgToplevel() {
 	wl_list_remove(&commit.link);
 }
 
+void ZenithXdgToplevel::request_close() const {
+	wlr_xdg_toplevel_send_close(xdg_toplevel);
+}
+
+void ZenithXdgToplevel::set_visible(bool value) {
+	is_visible = value;
+}
+
+bool ZenithXdgToplevel::visible() const {
+	return is_visible;
+}
+
+bool ZenithXdgToplevel::maximized() const {
+	return xdg_toplevel->current.maximized;
+}
+
+std::optional<ToplevelDecoration> ZenithXdgToplevel::decoration() const {
+	auto* server = ZenithServer::instance();
+	size_t id = zenith_xdg_surface->zenith_surface->id;
+	auto it = server->toplevel_decorations.find(id);
+	if (it == server->toplevel_decorations.end()) {
+		return std::nullopt;
+	}
+	return static_cast<ToplevelDecoration>(it->second->wlr_toplevel_decoration->pending.mode);
+}
+
+const char* ZenithXdgToplevel::protocol() const {
+	return "xdg";
+}
+
 void zenith_xdg_toplevel_destroy(wl_listener* listener, void* data) {
 	ZenithXdgToplevel* zenith_xdg_toplevel = wl_container_of(listener, zenith_xdg_toplevel, destroy);
 
@@ -121,10 +151,16 @@ void ZenithXdgToplevel::focus(bool focus) const {
 			                               keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 
 			for (auto& text_input: server->text_inputs) {
-				if (wl_resource_get_client(text_input->wlr_text_input->resource) == client &&
-				    text_input->wlr_text_input->focused_surface != xdg_surface->surface) {
-					text_input->enter(xdg_surface->surface);
+				if (wl_resource_get_client(text_input->wlr_text_input->resource) != client) {
+					continue;
 				}
+				if (text_input->wlr_text_input->focused_surface == xdg_surface->surface) {
+					continue;
+				}
+				if (text_input->wlr_text_input->focused_surface != nullptr) {
+					text_input->leave();
+				}
+				text_input->enter(xdg_surface->surface);
 			}
 		}
 	} else {
@@ -184,19 +220,25 @@ void zenith_xdg_toplevel_request_maximize(wl_listener* listener, void* data) {
 		}
 		wlr_xdg_toplevel_set_maximized(toplevel, toplevel->requested.maximized);
 	}
-	ZenithServer::instance()->embedder_state->set_window_state(id, toplevel->requested.maximized, zenith_xdg_toplevel->visible);
+	ZenithServer::instance()->embedder_state->set_window_state(
+		id,
+		toplevel->requested.maximized,
+		zenith_xdg_toplevel->visible(),
+		zenith_xdg_toplevel->protocol()
+	);
 }
 
 void zenith_xdg_toplevel_request_minimize(wl_listener* listener, void* data) {
 	(void)data;
 	ZenithXdgToplevel* zenith_xdg_toplevel = wl_container_of(listener, zenith_xdg_toplevel, request_minimize);
-	zenith_xdg_toplevel->visible = false;
+	zenith_xdg_toplevel->set_visible(false);
 	zenith_xdg_toplevel->focus(false);
 	size_t id = zenith_xdg_toplevel->zenith_xdg_surface->zenith_surface->id;
 	ZenithServer::instance()->embedder_state->set_window_state(
 		id,
 		zenith_xdg_toplevel->xdg_toplevel->current.maximized,
-		false
+		false,
+		zenith_xdg_toplevel->protocol()
 	);
 }
 
@@ -204,14 +246,14 @@ void zenith_xdg_toplevel_set_app_id(wl_listener* listener, void* data) {
 	ZenithXdgToplevel* zenith_xdg_toplevel = wl_container_of(listener, zenith_xdg_toplevel, set_app_id);
 	size_t id = zenith_xdg_toplevel->zenith_xdg_surface->zenith_surface->id;
 	char* app_id = zenith_xdg_toplevel->zenith_xdg_surface->xdg_surface->toplevel->app_id;
-	ZenithServer::instance()->embedder_state->set_app_id(id, app_id);
+	ZenithServer::instance()->embedder_state->set_app_id(id, app_id, zenith_xdg_toplevel->protocol());
 }
 
 void zenith_xdg_toplevel_set_title(wl_listener* listener, void* data) {
 	ZenithXdgToplevel* zenith_xdg_toplevel = wl_container_of(listener, zenith_xdg_toplevel, set_title);
 	size_t id = zenith_xdg_toplevel->zenith_xdg_surface->zenith_surface->id;
 	char* title = zenith_xdg_toplevel->zenith_xdg_surface->xdg_surface->toplevel->title;
-	ZenithServer::instance()->embedder_state->set_window_title(id, title);
+	ZenithServer::instance()->embedder_state->set_window_title(id, title, zenith_xdg_toplevel->protocol());
 }
 
 void zenith_xdg_toplevel_request_move(wl_listener* listener, void* data) {

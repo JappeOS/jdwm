@@ -43,8 +43,9 @@ void zenith_xdg_toplevel_create(wl_listener* listener, void* data) {
 	wlr_log(WLR_INFO, "zenith: new_toplevel event received");
 	auto zenith_xdg_surface_ref = register_xdg_surface(server, toplevel->base);
 	size_t id = zenith_xdg_surface_ref->zenith_surface->id;
-	auto zenith_toplevel = new ZenithXdgToplevel(toplevel, zenith_xdg_surface_ref);
+	auto zenith_toplevel = std::make_shared<ZenithXdgToplevel>(toplevel, zenith_xdg_surface_ref);
 	server->xdg_toplevels.insert(std::make_pair(id, zenith_toplevel));
+	server->toplevels.insert(std::make_pair(id, zenith_toplevel));
 	wlr_log(WLR_INFO, "zenith: toplevel registered with id=%zu", id);
 }
 
@@ -84,13 +85,21 @@ void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
 	ZenithXdgSurface* zenith_xdg_surface = wl_container_of(listener, zenith_xdg_surface, unmap);
 	size_t id = zenith_xdg_surface->zenith_surface->id;
 	auto* server = ZenithServer::instance();
+	wlr_surface* surface = zenith_xdg_surface->xdg_surface->surface;
+
+	for (auto* text_input : server->text_inputs) {
+		if (text_input->wlr_text_input->focused_surface == surface) {
+			text_input->leave();
+		}
+	}
+
 	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 		if (server->pointer != nullptr) {
 			server->pointer->restore_default_cursor();
 		}
 	}
-	server->embedder_state->unmap_xdg_surface(id);
+	server->embedder_state->unmap_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
 	server->output_manager->schedule_compositor_frame();
 }
 
@@ -99,11 +108,18 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 	size_t id = zenith_xdg_surface->zenith_surface->id;
 
 	auto* server = ZenithServer::instance();
+	wlr_surface* surface = zenith_xdg_surface->xdg_surface->surface;
 
 	// wlroots emits xdg_surface destroy and then asserts listener lists are empty.
 	wl_list_remove(&zenith_xdg_surface->map.link);
 	wl_list_remove(&zenith_xdg_surface->unmap.link);
 	wl_list_remove(&zenith_xdg_surface->destroy.link);
+
+	for (auto* text_input : server->text_inputs) {
+		if (text_input->wlr_text_input->focused_surface == surface) {
+			text_input->leave();
+		}
+	}
 
 	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
 		wlr_seat_pointer_notify_clear_focus(server->seat);
@@ -114,6 +130,8 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 
 	if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
 		bool erased = server->xdg_toplevels.erase(id);
+		assert(erased);
+		erased = server->toplevels.erase(id);
 		assert(erased);
 	} else if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_POPUP) {
 		bool erased = server->xdg_popups.erase(id);

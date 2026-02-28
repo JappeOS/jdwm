@@ -2,6 +2,10 @@
 #include <csignal>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 #include "platform_api.hpp"
 #include "server.hpp"
 #include "encodable_value.h"
@@ -11,13 +15,67 @@
 #include "util/wlr/wlr_extensions.hpp"
 #include "auth.hpp"
 #include "output/zenith_output_manager.hpp"
+#include "xwayland_input_helpers.hpp"
 
 extern "C" {
 #define static
 #include "wlr/types/wlr_seat.h"
-#include "wlr/types/wlr_xdg_shell.h"
 #include "wlr/util/log.h"
 #undef static
+}
+
+static bool encodable_to_double(const flutter::EncodableValue& value, double* out) {
+	if (out == nullptr) {
+		return false;
+	}
+	if (auto* v = std::get_if<int32_t>(&value)) {
+		*out = (double) *v;
+		return true;
+	}
+	if (auto* v = std::get_if<int64_t>(&value)) {
+		*out = (double) *v;
+		return true;
+	}
+	if (auto* v = std::get_if<double>(&value)) {
+		*out = *v;
+		return true;
+	}
+	return false;
+}
+
+struct ResizeWindowRequest {
+	int width = 0;
+	int height = 0;
+	bool has_x = false;
+	bool has_y = false;
+	double requested_x = 0.0;
+	double requested_y = 0.0;
+};
+
+static std::mutex g_resize_window_requests_mutex;
+static std::unordered_map<size_t, ResizeWindowRequest> g_pending_resize_window_requests;
+static std::unordered_set<size_t> g_resize_window_worker_scheduled;
+
+static void apply_resize_window_request(ZenithServer* server, size_t view_id, const ResizeWindowRequest& request) {
+	auto view_it = server->toplevels.find(view_id);
+	if (view_it == server->toplevels.end()) {
+		return;
+	}
+	if (zenith::xwayland_input::configure_xwayland_toplevel(
+			server,
+			view_id,
+			request.width,
+			request.height,
+			request.has_x,
+			request.has_y,
+			request.requested_x,
+			request.requested_y
+		)) {
+		return;
+	}
+
+	auto* view = view_it->second.get();
+	view->resize((size_t) request.width, (size_t) request.height);
 }
 
 void startup_complete(ZenithServer* server, const flutter::MethodCall<>& call,
@@ -45,8 +103,8 @@ void activate_window(ZenithServer* server,
 	bool activate = std::get<bool>(list[1]);
 
 	server->callable_queue.enqueue([server, view_id, activate] {
-		auto view_it = server->xdg_toplevels.find(view_id);
-		if (view_it == server->xdg_toplevels.end()) {
+		auto view_it = server->toplevels.find(view_id);
+		if (view_it == server->toplevels.end()) {
 			return;
 		}
 		auto* view = view_it->second.get();
@@ -69,12 +127,39 @@ void pointer_hover(ZenithServer* server,
 	server->callable_queue.enqueue([server, x, y, view_id] {
 		auto view_it = server->surfaces.find(view_id);
 		if (view_it == server->surfaces.end()) {
+			zenith::xwayland_input::log_missing_surface_debug(view_id, x, y);
 			return;
 		}
 		ZenithSurface* view = view_it->second.get();
 
-		wlr_seat_pointer_notify_enter(server->seat, view->surface, x, y);
-		wlr_seat_pointer_notify_motion(server->seat, current_time_milliseconds(), x, y);
+		double local_x = x;
+		double local_y = y;
+		const bool xwayland_coords_remapped =
+			zenith::xwayland_input::remap_pointer_coords(view->surface, &local_x, &local_y);
+
+		const bool need_enter = server->seat->pointer_state.focused_surface != view->surface;
+		if (need_enter) {
+			zenith::xwayland_input::log_pointer_focus_debug("before-enter", server, view_id, view->surface, local_x, local_y, xwayland_coords_remapped, false);
+			wlr_seat_pointer_notify_enter(server->seat, view->surface, local_x, local_y);
+			zenith::xwayland_input::log_pointer_focus_debug("after-enter", server, view_id, view->surface, local_x, local_y, xwayland_coords_remapped, false);
+		}
+		if (xwayland_coords_remapped && server->seat->pointer_state.focused_surface != view->surface) {
+			// Fallback for misreported Xwayland input regions: keep routing stable.
+			double fallback_x = view->surface->current.width > 0
+				? (double) view->surface->current.width / 2.0
+				: 0.0;
+			double fallback_y = view->surface->current.height > 0
+				? (double) view->surface->current.height / 2.0
+				: 0.0;
+			wlr_seat_pointer_notify_enter(server->seat, view->surface, fallback_x, fallback_y);
+			local_x = fallback_x;
+			local_y = fallback_y;
+			zenith::xwayland_input::log_pointer_focus_debug("after-fallback-enter", server, view_id, view->surface, local_x, local_y, xwayland_coords_remapped, true);
+		}
+		wlr_seat_pointer_notify_motion(server->seat, current_time_milliseconds(), local_x, local_y);
+		zenith::xwayland_input::log_pointer_focus_debug("after-motion", server, view_id, view->surface, local_x, local_y, xwayland_coords_remapped, false);
+		wlr_seat_pointer_notify_frame(server->seat);
+		zenith::xwayland_input::log_pointer_focus_debug("after-frame", server, view_id, view->surface, local_x, local_y, xwayland_coords_remapped, false);
 		server_update_pointer_constraint(server);
 	});
 	result->Success();
@@ -85,7 +170,9 @@ void pointer_exit(ZenithServer* server,
                   std::unique_ptr<flutter::MethodResult<>>&& result) {
 
 	server->callable_queue.enqueue([server] {
+		zenith::xwayland_input::log_pointer_focus_debug("before-clear-focus", server, 0, nullptr, 0.0, 0.0, false, false);
 		wlr_seat_pointer_notify_clear_focus(server->seat);
+		zenith::xwayland_input::log_pointer_focus_debug("after-clear-focus", server, 0, nullptr, 0.0, 0.0, false, false);
 		server_update_pointer_constraint(server);
 		if (server->pointer != nullptr && server->pointer->is_visible()) {
 			wlr_cursor_set_xcursor(server->pointer->cursor, server->pointer->cursor_mgr, "left_ptr");
@@ -102,12 +189,12 @@ void close_window(ZenithServer* server,
 	size_t view_id = args[flutter::EncodableValue("view_id")].LongValue();
 
 	server->callable_queue.enqueue([server, view_id] {
-		auto view_it = server->xdg_toplevels.find(view_id);
-		if (view_it == server->xdg_toplevels.end()) {
+		auto view_it = server->toplevels.find(view_id);
+		if (view_it == server->toplevels.end()) {
 			return;
 		}
-		ZenithXdgToplevel* view = view_it->second.get();
-		wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+		auto* view = view_it->second.get();
+		view->request_close();
 	});
 	result->Success();
 }
@@ -120,17 +207,51 @@ void resize_window(ZenithServer* server,
 	size_t view_id = args[flutter::EncodableValue("view_id")].LongValue();
 	auto width = std::get<int>(args[flutter::EncodableValue("width")]);
 	auto height = std::get<int>(args[flutter::EncodableValue("height")]);
+	double requested_x = 0.0;
+	double requested_y = 0.0;
+	const bool has_x = [&] {
+		auto it = args.find(flutter::EncodableValue("x"));
+		return it != args.end() && encodable_to_double(it->second, &requested_x);
+	}();
+	const bool has_y = [&] {
+		auto it = args.find(flutter::EncodableValue("y"));
+		return it != args.end() && encodable_to_double(it->second, &requested_y);
+	}();
 
-	server->callable_queue.enqueue([server, view_id, width, height] {
-		auto view_it = server->xdg_toplevels.find(view_id);
-		if (view_it == server->xdg_toplevels.end()) {
-			return;
-		}
-		ZenithXdgToplevel* view = view_it->second.get();
-		if (view->xdg_toplevel->base->initialized) {
-			wlr_xdg_toplevel_set_size(view->xdg_toplevel, (uint32_t) width, (uint32_t) height);
-		}
-	});
+	ResizeWindowRequest request = {
+		.width = width,
+		.height = height,
+		.has_x = has_x,
+		.has_y = has_y,
+		.requested_x = requested_x,
+		.requested_y = requested_y,
+	};
+
+	bool enqueue_worker = false;
+	{
+		std::scoped_lock lock(g_resize_window_requests_mutex);
+		g_pending_resize_window_requests.insert_or_assign(view_id, request);
+		enqueue_worker = g_resize_window_worker_scheduled.insert(view_id).second;
+	}
+
+	if (enqueue_worker) {
+		server->callable_queue.enqueue([server, view_id] {
+			while (true) {
+				ResizeWindowRequest next_request = {};
+				{
+					std::scoped_lock lock(g_resize_window_requests_mutex);
+					auto pending_it = g_pending_resize_window_requests.find(view_id);
+					if (pending_it == g_pending_resize_window_requests.end()) {
+						g_resize_window_worker_scheduled.erase(view_id);
+						break;
+					}
+					next_request = pending_it->second;
+					g_pending_resize_window_requests.erase(pending_it);
+				}
+				apply_resize_window_request(server, view_id, next_request);
+			}
+		});
+	}
 
 	result->Success();
 }
@@ -142,13 +263,13 @@ void maximize_window(ZenithServer* server, const flutter::MethodCall<>& call,
 	auto value = std::get<bool>(args[flutter::EncodableValue("value")]);
 
 	server->callable_queue.enqueue([server, view_id, value] {
-		auto view_it = server->xdg_toplevels.find(view_id);
-		if (view_it == server->xdg_toplevels.end()) {
+		auto view_it = server->toplevels.find(view_id);
+		if (view_it == server->toplevels.end()) {
 			return;
 		}
-		ZenithXdgToplevel* view = view_it->second.get();
+		auto* view = view_it->second.get();
 		view->maximize(value);
-		server->embedder_state->set_window_state(view_id, value, view->visible);
+		server->embedder_state->set_window_state(view_id, value, view->visible(), view->protocol());
 	});
 
 	result->Success();
@@ -193,6 +314,7 @@ void mouse_button_event(ZenithServer* server, const flutter::MethodCall<>& call,
 	}
 
 	server->callable_queue.enqueue([server, linux_button, is_pressed] {
+		zenith::xwayland_input::log_button_focus_debug("before-button", server, linux_button, is_pressed);
 		wlr_seat_pointer_notify_button(server->seat, current_time_milliseconds(), linux_button,
 		                               is_pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
 		// FIXME:
@@ -205,6 +327,7 @@ void mouse_button_event(ZenithServer* server, const flutter::MethodCall<>& call,
 		// In any case, pointer support is considered a second-class citizen as this desktop environment is targeted towards
 		// mobile devices first and foremost, but the pointer is still useful during development.
 		wlr_seat_pointer_notify_frame(server->seat);
+		zenith::xwayland_input::log_button_focus_debug("after-button", server, linux_button, is_pressed);
 	});
 	result->Success();
 }
@@ -217,13 +340,13 @@ void change_window_visibility(ZenithServer* server, const flutter::MethodCall<>&
 	auto visible = std::get<bool>(args[flutter::EncodableValue("visible")]);
 
 	server->callable_queue.enqueue([server, view_id, visible] {
-		auto view_it = server->xdg_toplevels.find(view_id);
-		if (view_it == server->xdg_toplevels.end()) {
+		auto view_it = server->toplevels.find(view_id);
+		if (view_it == server->toplevels.end()) {
 			return;
 		}
-		ZenithXdgToplevel* view = view_it->second.get();
-		view->visible = visible;
-		server->embedder_state->set_window_state(view_id, view->xdg_toplevel->current.maximized, visible);
+		auto* view = view_it->second.get();
+		view->set_visible(visible);
+		server->embedder_state->set_window_state(view_id, view->maximized(), view->visible(), view->protocol());
 	});
 	result->Success();
 }

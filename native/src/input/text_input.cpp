@@ -29,10 +29,19 @@ ZenithTextInput::ZenithTextInput(wlr_text_input_v3* wlr_text_input)
 }
 
 void ZenithTextInput::enter(wlr_surface* surface) const {
+	if (wlr_text_input->focused_surface == surface) {
+		return;
+	}
+	if (wlr_text_input->focused_surface != nullptr) {
+		leave();
+	}
 	wlr_text_input_v3_send_enter(wlr_text_input, surface);
 }
 
 void ZenithTextInput::leave() const {
+	if (wlr_text_input->focused_surface == nullptr) {
+		return;
+	}
 	if (wlr_text_input->current_enabled and wlr_text_input->focused_surface != nullptr) {
 		disable();
 	}

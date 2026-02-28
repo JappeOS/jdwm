@@ -7,10 +7,12 @@
 #include "time.hpp"
 #include "output/zenith_output_manager.hpp"
 #include <iostream>
+#include <cmath>
 
 extern "C" {
 #define static
 #include "wlr/types/wlr_pointer.h"
+#include "wlr/util/log.h"
 #undef static
 }
 
@@ -21,7 +23,27 @@ static void schedule_cursor_frame(ZenithServer* server) {
 }
 
 static float pointer_scale(ZenithServer* server, ZenithPointer* pointer) {
-	return server->output_manager->pointer_scale_at(pointer->cursor->x, pointer->cursor->y);
+	if (server == nullptr) {
+		return 1.0f;
+	}
+	const float scale = server->display_scale > 0.0f ? server->display_scale : 1.0f;
+	if (pointer != nullptr && server->output_manager != nullptr) {
+		static bool logged_mismatch = false;
+		if (!logged_mismatch) {
+			const float output_scale =
+				server->output_manager->pointer_scale_at(pointer->cursor->x, pointer->cursor->y);
+			if (std::fabs(output_scale - scale) > 0.001f) {
+				logged_mismatch = true;
+				wlr_log(
+					WLR_INFO,
+					"zenith:pointer-scale using display_scale=%.3f while output_scale_at_cursor=%.3f",
+					scale,
+					output_scale
+				);
+			}
+		}
+	}
+	return scale;
 }
 
 static bool has_any_output(ZenithServer* server) {

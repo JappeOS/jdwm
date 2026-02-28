@@ -24,9 +24,19 @@ class MappedWindowList extends _$MappedWindowList {
     return IList();
   }
 
-  void add(int viewId) => state = state.add(viewId);
+  void add(int viewId) {
+    if (state.contains(viewId)) {
+      return;
+    }
+    state = state.add(viewId);
+  }
 
-  void remove(int viewId) => state = state.remove(viewId);
+  void remove(int viewId) {
+    if (!state.contains(viewId)) {
+      return;
+    }
+    state = state.remove(viewId);
+  }
 }
 
 @Riverpod(keepAlive: true)
@@ -80,6 +90,9 @@ class BackendMonitorList extends _$BackendMonitorList {
 
 @Riverpod(keepAlive: true)
 class PlatformApi extends _$PlatformApi {
+  final Set<int> _genericToplevelViewIds = <int>{};
+  final Map<int, String> _genericToplevelProtocols = <int, String>{};
+
   @override
   PlatformApiState build() => PlatformApiState();
 
@@ -89,11 +102,20 @@ class PlatformApi extends _$PlatformApi {
         case "commit_surface":
           _commitSurface(call.arguments);
           break;
+        case "commit_toplevel_surface":
+          _onGenericToplevelEvent(call.method, call.arguments);
+          break;
         case "map_xdg_surface":
           _mapXdgSurface(call.arguments);
           break;
+        case "map_toplevel_surface":
+          _onGenericToplevelEvent(call.method, call.arguments);
+          break;
         case "unmap_xdg_surface":
           _unmapXdgSurface(call.arguments);
+          break;
+        case "unmap_toplevel_surface":
+          _onGenericToplevelEvent(call.method, call.arguments);
           break;
         case "map_subsurface":
           _mapSubsurface(call.arguments);
@@ -113,11 +135,20 @@ class PlatformApi extends _$PlatformApi {
         case "set_title":
           _setTitle(call.arguments);
           break;
+        case "set_toplevel_title":
+          _onGenericToplevelEvent(call.method, call.arguments);
+          break;
         case "set_app_id":
           _setAppId(call.arguments);
           break;
+        case "set_toplevel_app_id":
+          _onGenericToplevelEvent(call.method, call.arguments);
+          break;
         case "set_window_state":
           _setWindowState(call.arguments);
+          break;
+        case "set_toplevel_state":
+          _onGenericToplevelEvent(call.method, call.arguments);
           break;
         case "set_monitors":
           _setMonitors(call.arguments);
@@ -232,12 +263,25 @@ class PlatformApi extends _$PlatformApi {
     });
   }
 
-  Future<void> resizeWindow(int viewId, int width, int height) {
-    return state.platform.invokeMethod("resize_window", {
+  Future<void> resizeWindow(
+    int viewId,
+    int width,
+    int height, {
+    double? x,
+    double? y,
+  }) {
+    final args = <String, Object>{
       "view_id": viewId,
       "width": width,
       "height": height,
-    });
+    };
+    if (x != null) {
+      args["x"] = x;
+    }
+    if (y != null) {
+      args["y"] = y;
+    }
+    return state.platform.invokeMethod("resize_window", args);
   }
 
   Stream<TextInputEventType> getTextInputEventsForViewId(int viewId) {
@@ -386,8 +430,9 @@ class PlatformApi extends _$PlatformApi {
       }
     }
 
+    final useGenericToplevelPath = _genericToplevelViewIds.contains(viewId);
     bool hasToplevelDecoration = event["has_toplevel_decoration"];
-    if (hasToplevelDecoration) {
+    if (hasToplevelDecoration && !useGenericToplevelPath) {
       int toplevelDecorationInt = event["toplevel_decoration"];
       var decoration = ToplevelDecoration.fromInt(toplevelDecorationInt);
       ref
@@ -396,13 +441,13 @@ class PlatformApi extends _$PlatformApi {
     }
 
     bool hasToplevelTitle = event["has_toplevel_title"];
-    if (hasToplevelTitle) {
+    if (hasToplevelTitle && !useGenericToplevelPath) {
       String title = event["toplevel_title"];
       ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(title);
     }
 
     bool hasToplevelAppId = event["has_toplevel_app_id"];
-    if (hasToplevelAppId) {
+    if (hasToplevelAppId && !useGenericToplevelPath) {
       String appId = event["toplevel_app_id"];
       ref.read(xdgToplevelStatesProvider(viewId).notifier).setAppId(appId);
     }
@@ -426,8 +471,10 @@ class PlatformApi extends _$PlatformApi {
         }
         break;
       case XdgSurfaceRole.toplevel:
-        ref.read(mappedWindowListProvider.notifier).add(viewId);
-        state.windowMappedSink.add(viewId);
+        if (_genericToplevelViewIds.contains(viewId)) {
+          break;
+        }
+        _mapToplevelView(viewId);
         break;
       case XdgSurfaceRole.popup:
         ref.read(popupStackChildrenProvider.notifier).add(viewId);
@@ -446,8 +493,10 @@ class PlatformApi extends _$PlatformApi {
         }
         break; // Unreachable.
       case XdgSurfaceRole.toplevel:
-        ref.read(mappedWindowListProvider.notifier).remove(viewId);
-        state.windowUnmappedSink.add(viewId);
+        if (_genericToplevelViewIds.contains(viewId)) {
+          break;
+        }
+        _unmapToplevelView(viewId);
         break;
       case XdgSurfaceRole.popup:
         await ref
@@ -475,6 +524,141 @@ class PlatformApi extends _$PlatformApi {
     state.textInputEventsSink.add(event);
   }
 
+  void _onGenericToplevelEvent(String method, dynamic event) {
+    if (event is! Map) {
+      return;
+    }
+    final dynamic rawViewId = event["view_id"];
+    if (rawViewId is! num) {
+      return;
+    }
+    final viewId = rawViewId.toInt();
+    _markGenericToplevelView(viewId, event["protocol"]);
+
+    switch (method) {
+      case "map_toplevel_surface":
+        _ensureToplevelRole(viewId);
+        _mapToplevelView(viewId);
+        break;
+      case "unmap_toplevel_surface":
+        _genericToplevelProtocols.remove(viewId);
+        _unmapToplevelView(viewId);
+        break;
+      case "commit_toplevel_surface":
+        _handleGenericToplevelCommit(viewId, event);
+        break;
+      case "set_toplevel_title":
+        final dynamic rawTitle = event["title"];
+        if (rawTitle is String) {
+          ref
+              .read(xdgToplevelStatesProvider(viewId).notifier)
+              .setTitle(rawTitle);
+        }
+        break;
+      case "set_toplevel_app_id":
+        final dynamic rawAppId = event["app_id"];
+        if (rawAppId is String) {
+          ref
+              .read(xdgToplevelStatesProvider(viewId).notifier)
+              .setAppId(rawAppId);
+        }
+        break;
+      case "set_toplevel_state":
+        final dynamic rawMaximized = event["maximized"];
+        final dynamic rawVisible = event["visible"];
+        if (rawMaximized is bool && rawVisible is bool) {
+          ref
+              .read(xdgToplevelStatesProvider(viewId).notifier)
+              .setWindowState(visible: rawVisible, maximized: rawMaximized);
+        }
+        break;
+    }
+  }
+
+  void _markGenericToplevelView(int viewId, dynamic protocol) {
+    _genericToplevelViewIds.add(viewId);
+    if (protocol is String && protocol.isNotEmpty) {
+      _genericToplevelProtocols[viewId] = protocol;
+    }
+  }
+
+  bool isXwaylandView(int viewId) =>
+      _genericToplevelProtocols[viewId] == "xwayland";
+
+  void _mapToplevelView(int viewId) {
+    final alreadyMapped = ref.read(mappedWindowListProvider).contains(viewId);
+    ref.read(mappedWindowListProvider.notifier).add(viewId);
+    if (!alreadyMapped) {
+      state.windowMappedSink.add(viewId);
+    }
+  }
+
+  void _unmapToplevelView(int viewId) {
+    final wasMapped = ref.read(mappedWindowListProvider).contains(viewId);
+    ref.read(mappedWindowListProvider.notifier).remove(viewId);
+    if (wasMapped) {
+      state.windowUnmappedSink.add(viewId);
+    }
+  }
+
+  void _ensureToplevelRole(int viewId) {
+    final current = ref.read(xdgSurfaceStatesProvider(viewId));
+    if (current.role == XdgSurfaceRole.toplevel) {
+      return;
+    }
+    ref.read(xdgSurfaceStatesProvider(viewId).notifier).commit(
+          role: XdgSurfaceRole.toplevel,
+          visibleBounds: current.visibleBounds,
+        );
+  }
+
+  void _handleGenericToplevelCommit(int viewId, Map event) {
+    final dynamic rawX = event["x"];
+    final dynamic rawY = event["y"];
+    final dynamic rawWidth = event["width"];
+    final dynamic rawHeight = event["height"];
+    final isXwayland = _genericToplevelProtocols[viewId] == "xwayland";
+    if (rawX is num && rawY is num && rawWidth is num && rawHeight is num) {
+      final visibleX = isXwayland ? 0.0 : rawX.toDouble();
+      final visibleY = isXwayland ? 0.0 : rawY.toDouble();
+      ref.read(xdgSurfaceStatesProvider(viewId).notifier).commit(
+            role: XdgSurfaceRole.toplevel,
+            visibleBounds: Rect.fromLTWH(
+              visibleX,
+              visibleY,
+              rawWidth.toDouble(),
+              rawHeight.toDouble(),
+            ),
+          );
+    } else {
+      _ensureToplevelRole(viewId);
+    }
+
+    if (event["has_decoration"] == true) {
+      final dynamic rawDecoration = event["decoration"];
+      if (rawDecoration is num) {
+        final decoration = ToplevelDecoration.fromInt(rawDecoration.toInt());
+        ref
+            .read(xdgToplevelStatesProvider(viewId).notifier)
+            .setDecoration(decoration);
+      }
+    }
+
+    if (event["has_title"] == true) {
+      final dynamic rawTitle = event["title"];
+      if (rawTitle is String) {
+        ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(rawTitle);
+      }
+    }
+
+    if (event["has_app_id"] == true) {
+      final dynamic rawAppId = event["app_id"];
+      if (rawAppId is String) {
+        ref.read(xdgToplevelStatesProvider(viewId).notifier).setAppId(rawAppId);
+      }
+    }
+  }
+
   void _interactiveMove(dynamic event) {
     int viewId = event["view_id"];
     ref
@@ -493,18 +677,27 @@ class PlatformApi extends _$PlatformApi {
 
   void _setTitle(dynamic event) {
     int viewId = event["view_id"];
+    if (_genericToplevelViewIds.contains(viewId)) {
+      return;
+    }
     String title = event["title"];
     ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(title);
   }
 
   void _setAppId(dynamic event) {
     int viewId = event["view_id"];
+    if (_genericToplevelViewIds.contains(viewId)) {
+      return;
+    }
     String appId = event["app_id"];
-    ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(appId);
+    ref.read(xdgToplevelStatesProvider(viewId).notifier).setAppId(appId);
   }
 
   void _setWindowState(dynamic event) {
     int viewId = event["view_id"];
+    if (_genericToplevelViewIds.contains(viewId)) {
+      return;
+    }
     bool maximized = event["maximized"] as bool;
     bool visible = event["visible"] as bool;
     ref

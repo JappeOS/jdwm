@@ -7,8 +7,10 @@
 #include "multimonitor/multi_monitor_mode.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "build_info.hpp"
+#include "xwayland_debug.hpp"
 #include <unistd.h>
 #include <sys/eventfd.h>
+#include <cstdlib>
 
 extern "C" {
 #define static
@@ -22,6 +24,9 @@ extern "C" {
 #include <wlr/util/log.h>
 #include <wlr/render/gles2.h>
 #include <wlr/interfaces/wlr_touch.h>
+#define class wlroots_xwayland_class
+#include <wlr/xwayland/xwayland.h>
+#undef class
 #undef static
 // Private wlroots headers
 #include <render/egl.h>
@@ -38,6 +43,7 @@ ZenithServer* ZenithServer::instance() {
 
 static float read_display_scale();
 static void detach_active_pointer_constraint_listener(ZenithServer* server);
+static void server_xwayland_ready(wl_listener* listener, void* data);
 
 ZenithServer::ZenithServer() {
 	main_thread_id = std::this_thread::get_id();
@@ -131,6 +137,13 @@ ZenithServer::ZenithServer() {
 		exit(8);
 	}
 
+	xwayland = wlr_xwayland_create(display, compositor, false);
+	if (xwayland == nullptr) {
+		wlr_log(WLR_ERROR, "Could not create wlroots Xwayland");
+		exit(8);
+	}
+	wlr_xwayland_set_seat(xwayland, seat);
+
 	text_input_manager = wlr_text_input_manager_v3_create(display);
 	if (text_input_manager == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create text input manager");
@@ -175,6 +188,12 @@ ZenithServer::ZenithServer() {
 
 	new_xdg_popup.notify = zenith_xdg_popup_create;
 	wl_signal_add(&xdg_shell->events.new_popup, &new_xdg_popup);
+
+	xwayland_ready.notify = server_xwayland_ready;
+	wl_signal_add(&xwayland->events.ready, &xwayland_ready);
+
+	new_xwayland_surface.notify = zenith_xwayland_surface_create;
+	wl_signal_add(&xwayland->events.new_surface, &new_xwayland_surface);
 
 	// Called at the start for each available input device, but also when the user plugs in a new input
 	// device, like a mouse, keyboard, drawing tablet, etc.
@@ -227,8 +246,6 @@ void ZenithServer::run(const char* startup_command) {
 
 	setenv("WAYLAND_DISPLAY", socket, true);
 	setenv("XDG_SESSION_TYPE", "wayland", true);
-	setenv("GDK_BACKEND", "wayland", true); // Force GTK apps to run on Wayland.
-	setenv("QT_QPA_PLATFORM", "wayland", true); // Force QT apps to run on Wayland.
 
 	wlr_egl* main_egl = wlr_gles2_renderer_get_egl(renderer);
 
@@ -261,6 +278,8 @@ void ZenithServer::run(const char* startup_command) {
 	wl_list_remove(&new_surface.link);
 	wl_list_remove(&new_xdg_toplevel.link);
 	wl_list_remove(&new_xdg_popup.link);
+	wl_list_remove(&xwayland_ready.link);
+	wl_list_remove(&new_xwayland_surface.link);
 	wl_list_remove(&new_input.link);
 	wl_list_remove(&request_cursor.link);
 	wl_list_remove(&new_text_input.link);
@@ -272,6 +291,20 @@ void ZenithServer::run(const char* startup_command) {
 	wlr_backend_destroy(backend);
 	wl_display_destroy_clients(display);
 	wl_display_destroy(display);
+}
+
+static void server_xwayland_ready(wl_listener* listener, void* data) {
+	(void)data;
+	ZenithServer* server = wl_container_of(listener, server, xwayland_ready);
+	if (server->xwayland == nullptr || server->xwayland->display_name == nullptr) {
+		return;
+	}
+	server->xwayland_is_ready = true;
+	setenv("DISPLAY", server->xwayland->display_name, true);
+	wlr_log(WLR_INFO, "Running Xwayland on DISPLAY=%s", server->xwayland->display_name);
+	if (server->output_manager != nullptr) {
+		server->output_manager->refresh_xwayland_workareas();
+	}
 }
 
 static float read_display_scale() {
@@ -346,9 +379,29 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 
 	auto* event = static_cast<wlr_seat_pointer_request_set_cursor_event*>(data);
 	wlr_seat_client* focused_client = server->seat->pointer_state.focused_client;
+	const bool allowed = focused_client == event->seat_client;
+	if (zenith_xwayland_input_debug_enabled()) {
+		wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
+		auto* focused_xwayland = focused_surface != nullptr
+			? wlr_xwayland_surface_try_from_wlr_surface(focused_surface)
+			: nullptr;
+		const bool focused_is_xwayland = focused_xwayland != nullptr;
+		if (focused_is_xwayland || !allowed) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:xw-cursor-request allowed=%d focused_client=%p req_client=%p focused_surface=%p focused_xw=%d focused_title=\"%s\"",
+				allowed ? 1 : 0,
+				(void*) focused_client,
+				(void*) event->seat_client,
+				(void*) focused_surface,
+				focused_is_xwayland ? 1 : 0,
+				focused_xwayland != nullptr && focused_xwayland->title != nullptr ? focused_xwayland->title : ""
+			);
+		}
+	}
 	/* This can be sent by any client, so we check to make sure this one is
 	 * actually has pointer focus first. */
-	if (focused_client == event->seat_client) {
+	if (allowed) {
 		/* Once we've vetted the client, we can tell the cursor to use the
 		 * provided surface as the cursor image. It will set the hardware cursor
 		 * on the output that it's currently on and continue to do so as the

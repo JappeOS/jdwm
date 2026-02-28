@@ -16,6 +16,9 @@ extern "C" {
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/render/gles2.h>
+#define class wlroots_xwayland_class
+#include <wlr/xwayland/xwayland.h>
+#undef class
 #undef static
 // Private wlroots headers
 #include <render/egl.h>
@@ -85,6 +88,18 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 		  .input_region = surface->input_region.extents,
 	};
 
+	// Xwayland may expose transformed/non-local input regions for some X11 apps.
+	// Keep hit-testing aligned with the visible texture by using full local bounds.
+	auto* xwayland_surface = wlr_xwayland_surface_try_from_wlr_surface(surface);
+	if (xwayland_surface != nullptr && !xwayland_surface->override_redirect) {
+		commit_message->surface.input_region = {
+			  .x1 = 0,
+			  .y1 = 0,
+			  .x2 = surface->current.width,
+			  .y2 = surface->current.height,
+		};
+	}
+
 	std::vector<SubsurfaceParentState> below{};
 	std::vector<SubsurfaceParentState> above{};
 
@@ -123,9 +138,9 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 		};
 		switch (xdg_surface->role) {
 			case WLR_XDG_SURFACE_ROLE_TOPLEVEL: {
-				auto it = server->toplevel_decorations.find(zenith_surface->id);
-				if (it != server->toplevel_decorations.end()) {
-					commit_message->toplevel_decoration = (ToplevelDecoration) it->second->wlr_toplevel_decoration->pending.mode;
+				auto toplevel_it = server->toplevels.find(zenith_surface->id);
+				if (toplevel_it != server->toplevels.end()) {
+					commit_message->toplevel_decoration = toplevel_it->second->decoration();
 				}
 				const char* title = xdg_surface->toplevel->title;
 				if (title != nullptr) {

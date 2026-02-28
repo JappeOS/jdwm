@@ -21,6 +21,9 @@ extern "C" {
 #include <wlr/render/allocator.h>
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
+#define class wlroots_xwayland_class
+#include <wlr/xwayland/xwayland.h>
+#undef class
 #undef static
 }
 
@@ -168,7 +171,7 @@ void output_frame(wl_listener* listener, void* data) {
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	for (auto& [id, view]: server->xdg_toplevels) {
 		wlr_xdg_surface* xdg_surface = view->xdg_toplevel->base;
-		if (!xdg_surface->surface->mapped || !view->visible) {
+		if (!xdg_surface->surface->mapped || !view->visible()) {
 			// An unmapped view should not be rendered.
 			continue;
 		}
@@ -177,6 +180,20 @@ void output_frame(wl_listener* listener, void* data) {
 		wlr_xdg_surface_for_each_surface(xdg_surface, [](struct wlr_surface* surface, int sx, int sy, void* data) {
 			auto* now = static_cast<timespec*>(data);
 			wlr_surface_send_frame_done(surface, now);
+		}, &now);
+	}
+
+	for (auto& [id, view]: server->xwayland_toplevels) {
+		(void)id;
+		wlr_surface* surface = view->xwayland_surface->surface;
+		if (surface == nullptr || !surface->mapped || !view->visible()) {
+			continue;
+		}
+		wlr_surface_for_each_surface(surface, [](struct wlr_surface* child, int sx, int sy, void* data) {
+			(void)sx;
+			(void)sy;
+			auto* now = static_cast<timespec*>(data);
+			wlr_surface_send_frame_done(child, now);
 		}, &now);
 	}
 

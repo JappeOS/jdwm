@@ -24,6 +24,7 @@ public:
 	void schedule_cursor_frame(double x, double y) const;
 	void schedule_compositor_frame() const;
 	void set_display_enabled(bool enable) const;
+	void refresh_xwayland_workareas() const;
 	void update_active_output_from_cursor(double x, double y) const;
 
 	ZenithOutput* presentation_source_output(ZenithOutput* target_output) const;

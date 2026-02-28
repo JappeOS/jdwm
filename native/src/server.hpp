@@ -16,6 +16,8 @@
 #include "surfaces/zenith_subsurface.hpp"
 #include "surfaces/zenith_xdg_toplevel.hpp"
 #include "surfaces/zenith_xdg_popup.hpp"
+#include "surfaces/zenith_xwayland_toplevel.hpp"
+#include "surfaces/zenith_toplevel.hpp"
 #include "util/rethreading/callable_queue.hpp"
 #include "util/offset.hpp"
 #include "flutter_engine/embedder_state.hpp"
@@ -36,6 +38,8 @@ extern "C" {
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #undef static
+struct wlr_xwayland;
+struct wlr_xwayland_surface;
 }
 
 namespace zenith {
@@ -63,6 +67,8 @@ public:
 	wlr_allocator* allocator;
 	wlr_compositor* compositor;
 	wlr_xdg_shell* xdg_shell;
+	wlr_xwayland* xwayland;
+	bool xwayland_is_ready = false;
 	wlr_text_input_manager_v3* text_input_manager;
 	wlr_xdg_decoration_manager_v1* decoration_manager;
 	wlr_data_device_manager* data_device_manager;
@@ -90,6 +96,8 @@ public:
 	wl_listener new_surface{};
 	wl_listener new_xdg_toplevel{};
 	wl_listener new_xdg_popup{};
+	wl_listener xwayland_ready{};
+	wl_listener new_xwayland_surface{};
 	wl_listener new_input{};
 	wl_listener request_cursor{};
 	wl_listener new_text_input{};
@@ -100,6 +108,9 @@ public:
 	std::unordered_map<size_t, std::shared_ptr<ZenithSubsurface>> subsurfaces{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithXdgSurface>> xdg_surfaces{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithXdgToplevel>> xdg_toplevels{};
+	std::unordered_map<wlr_xwayland_surface*, std::shared_ptr<ZenithXwaylandToplevel>> xwayland_surfaces{};
+	std::unordered_map<size_t, std::shared_ptr<ZenithXwaylandToplevel>> xwayland_toplevels{};
+	std::unordered_map<size_t, std::shared_ptr<ZenithToplevel>> toplevels{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithXdgPopup>> xdg_popups{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithToplevelDecoration>> toplevel_decorations{};
 

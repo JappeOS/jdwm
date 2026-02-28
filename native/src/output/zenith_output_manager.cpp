@@ -9,6 +9,9 @@ extern "C" {
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
+#define class wlroots_xwayland_class
+#include <wlr/xwayland/xwayland.h>
+#undef class
 #undef static
 }
 
@@ -60,6 +63,47 @@ static void ensure_extend_render_target(ZenithServer* server) {
 	}
 }
 
+static void update_xwayland_workareas_for_layout(ZenithServer* server) {
+	if (server == nullptr || server->xwayland == nullptr || !server->xwayland_is_ready ||
+	    server->output_layout == nullptr) {
+		return;
+	}
+
+	struct wlr_box extents = {};
+	wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
+	if (extents.width <= 0 || extents.height <= 0) {
+		if (server->output == nullptr || server->output->wlr_output == nullptr) {
+			return;
+		}
+		extents.x = 0;
+		extents.y = 0;
+		extents.width = server->output->wlr_output->width;
+		extents.height = server->output->wlr_output->height;
+	}
+
+	// Workareas are expressed in virtual-desktop coordinates. Normalize to a
+	// 0,0-origin viewport while keeping full desktop dimensions.
+	struct wlr_box workarea = {
+		.x = 0,
+		.y = 0,
+		.width = extents.width,
+		.height = extents.height,
+	};
+	wlr_xwayland_set_workareas(server->xwayland, &workarea, 1);
+	wlr_log(
+		WLR_INFO,
+		"zenith:xw-workarea layout_extents=(%d,%d,%d,%d) send_workarea=(%d,%d,%d,%d)",
+		extents.x,
+		extents.y,
+		extents.width,
+		extents.height,
+		workarea.x,
+		workarea.y,
+		workarea.width,
+		workarea.height
+	);
+}
+
 ZenithOutputManager::ZenithOutputManager(
 	ZenithServer* server, multimonitor::MultiMonitorMode mode)
 	: server_(server), mode_(mode) {
@@ -71,6 +115,10 @@ multimonitor::MultiMonitorMode ZenithOutputManager::mode() const {
 
 bool ZenithOutputManager::is_multi_output_enabled() const {
 	return mode_ != multimonitor::MultiMonitorMode::Off;
+}
+
+void ZenithOutputManager::refresh_xwayland_workareas() const {
+	update_xwayland_workareas_for_layout(server_);
 }
 
 void ZenithOutputManager::add_output_to_layout(ZenithServer* server, ZenithOutput* output) {
@@ -143,6 +191,7 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 		}
 		ensure_extend_render_target(server_);
 		send_virtual_desktop_metrics(server_);
+		update_xwayland_workareas_for_layout(server_);
 		struct wlr_box extents = {};
 		wlr_output_layout_get_box(server_->output_layout, nullptr, &extents);
 		wlr_log(WLR_INFO,
@@ -167,6 +216,7 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 	add_output_to_layout(server_, output.get());
 	server_->output = output;
 	send_single_output_metrics(server_, output.get());
+	update_xwayland_workareas_for_layout(server_);
 	if (mode_ == multimonitor::MultiMonitorMode::Last) {
 		wlr_log(WLR_INFO, "zenith: multimonitor(last) active output='%s' outputs=%zu",
 		        output->wlr_output->name, server_->outputs.size());
@@ -191,6 +241,7 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 
 	if (server_->outputs.empty()) {
 		server_->output = nullptr;
+		update_xwayland_workareas_for_layout(server_);
 		if (server_->embedder_state != nullptr) {
 			server_->embedder_state->publish_monitor_layout();
 		}
@@ -204,6 +255,7 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 		update_scene_node_positions(server_);
 		ensure_extend_render_target(server_);
 		send_virtual_desktop_metrics(server_);
+		update_xwayland_workareas_for_layout(server_);
 		if (server_->embedder_state != nullptr) {
 			server_->embedder_state->publish_monitor_layout();
 		}
@@ -226,6 +278,7 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 	}
 	add_output_to_layout(server_, server_->output.get());
 	send_single_output_metrics(server_, server_->output.get());
+	update_xwayland_workareas_for_layout(server_);
 	if (server_->embedder_state != nullptr) {
 		server_->embedder_state->publish_monitor_layout();
 	}
@@ -239,6 +292,7 @@ void ZenithOutputManager::handle_output_state_changed(ZenithOutput* changed_outp
 		update_scene_node_positions(server_);
 		ensure_extend_render_target(server_);
 		send_virtual_desktop_metrics(server_);
+		update_xwayland_workareas_for_layout(server_);
 		if (server_->embedder_state != nullptr) {
 			server_->embedder_state->publish_monitor_layout();
 		}
@@ -246,6 +300,7 @@ void ZenithOutputManager::handle_output_state_changed(ZenithOutput* changed_outp
 	}
 	if (server_->output != nullptr && server_->output->wlr_output == changed_output->wlr_output) {
 		send_single_output_metrics(server_, changed_output);
+		update_xwayland_workareas_for_layout(server_);
 		if (server_->embedder_state != nullptr) {
 			server_->embedder_state->publish_monitor_layout();
 		}

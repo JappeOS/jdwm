@@ -4,6 +4,7 @@
 #include <pixman-1/pixman.h>
 #include <vector>
 #include <optional>
+#include <string>
 
 extern "C" {
 #include <wlr/types/wlr_xdg_shell.h>

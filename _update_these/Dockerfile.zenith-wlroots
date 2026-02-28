@@ -1,21 +1,19 @@
-# Multi-stage Dockerfile for building Flutter desktop app with local wlroots
+# Multi-stage Dockerfile for building Zenith with local wlroots
 # Based on Ubuntu 22.04 for host glibc compatibility
 #
 # Build Requirements:
 #   - Local Flutter SDK (ensure via ./ensure_flutter_clone.sh)
 #   - wlroots source code (included in repo)
-#   - Project source code (included in repo)
+#   - zenith source code (included in repo)
 #
 # Usage:
-#   ./ensure_flutter_clone.sh                          # Clone <project_dir>/vendor/flutter_clone/ if missing
-#   docker build -f <project_dir>/Dockerfile.zenith-wlroots -t zenith-wlroots .
+#   ./ensure_flutter_clone.sh                          # Clone flutter_clone/ if missing
+#   docker build -f Dockerfile.zenith-wlroots -t zenith-wlroots .
 #   docker run --rm -v "$(pwd):/work" zenith-wlroots
 #
-# Output: /work/<project_dir>/build/<app_name>/release/bundle/<app_name> (runtime executable)
+# Output: /work/zenith/build/zenith/release/bundle/zenith (runtime executable)
 
 FROM ubuntu:22.04 AS builder
-ARG APP_NAME
-ARG PROJECT_DIR
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -87,15 +85,15 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
 # Set compiler to use gcc/g++
 ENV CC=gcc CXX=g++ CXXFLAGS="-std=c++17"
 
-# Copy and setup Flutter SDK from local <project_dir>/vendor/flutter_clone/
-COPY ${PROJECT_DIR}/vendor/flutter_clone /opt/flutter
+# Copy and setup Flutter SDK from local flutter_clone/
+COPY flutter_clone /opt/flutter
 RUN /opt/flutter/bin/flutter config --enable-linux-desktop && \
     /opt/flutter/bin/flutter precache
 ENV PATH="/opt/flutter/bin:${PATH}"
 
 # Copy source repositories
-COPY ${PROJECT_DIR}/vendor/wlroots /src/wlroots
-COPY ${PROJECT_DIR} /src/${PROJECT_DIR}
+COPY wlroots /src/wlroots
+COPY zenith /src/zenith
 
 WORKDIR /src
 
@@ -221,36 +219,20 @@ RUN test -f /usr/local/lib/x86_64-linux-gnu/libwlroots-0.19.so && \
     ls -lh /usr/local/lib/x86_64-linux-gnu/libwlroots* && \
     echo "wlroots 0.19.0 verified"
 
-# Build application
-RUN echo "=== Building ${APP_NAME} ===" && \
-    bash -lc '\
-      set -euo pipefail; \
-      cd /src/${PROJECT_DIR}; \
-      rm -rf build linux/build .dart_tool; \
-      flutter pub get; \
-      shadcn_files="$(find /root/.pub-cache/git -maxdepth 4 -type f -path "*/shadcn_flutter-*/lib/shadcn_flutter.dart" 2>/dev/null || true)"; \
-      if [[ -n "${shadcn_files}" ]]; then \
-        while IFS= read -r shadcn_file; do \
-          [[ -z "${shadcn_file}" ]] && continue; \
-          shadcn_dir="$(dirname "${shadcn_file}")"; \
-          if grep -q "show Icons, MaterialPageRoute, MaterialPage, SliverAppBar, FlutterLogo;" "${shadcn_file}"; then \
-            sed -i "s/show Icons, MaterialPageRoute, MaterialPage, SliverAppBar, FlutterLogo;/show Icons, MaterialPageRoute, MaterialPage, SliverAppBar, FlutterLogo, Brightness;/" "${shadcn_file}"; \
-          fi; \
-          find "${shadcn_dir}/src" -type f -name "*.dart" -print0 | xargs -0 perl -0777 -i -pe "\
-            s/translateByDouble\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)/translate(\$1, \$2, \$3)/gs; \
-            s/scaleByDouble\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)/scale(\$1, \$2, \$3)/gs;"; \
-        done <<< "${shadcn_files}"; \
-      fi; \
-      export WLR_ROOT=/usr/local; \
-      export PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}; \
-      make release_bundle APP_NAME=${APP_NAME} WLR_ROOT=/usr/local WLR_SRC_ROOT=/src/wlroots; \
-    ' && \
-    echo "${APP_NAME} build complete"
+# Build Zenith
+RUN echo "=== Building Zenith ===" && \
+    cd /src/zenith && \
+    rm -rf build linux/build .dart_tool && \
+    flutter pub get && \
+    export WLR_ROOT=/usr/local && \
+    export PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH && \
+    make release_bundle WLR_ROOT=/usr/local WLR_SRC_ROOT=/src/wlroots && \
+    echo "Zenith build complete"
 
 # Collect all runtime libraries into release bundle
-RUN mkdir -p /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/lib && \
-    mkdir -p /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/bin && \
-    cd /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/lib && \
+RUN mkdir -p /src/zenith/build/zenith/release/bundle/lib && \
+    mkdir -p /src/zenith/build/zenith/release/bundle/bin && \
+    cd /src/zenith/build/zenith/release/bundle/lib && \
     # Copy locally-built libraries that won't be on host
     cp /usr/local/lib/x86_64-linux-gnu/libwlroots-0.19.so . && \
     cp /usr/local/lib/x86_64-linux-gnu/libdrm.so.2.4.0 libdrm.so.2 2>/dev/null; \
@@ -263,29 +245,25 @@ RUN mkdir -p /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/lib && \
     cp -L /usr/lib/x86_64-linux-gnu/libX11-xcb.so.1 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb.so.1 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb-composite.so.0 . 2>/dev/null; \
-    cp -L /usr/lib/x86_64-linux-gnu/libxcb-render-util.so.0 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb-render.so.0 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb-res.so.0 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb-xfixes.so.0 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb-icccm.so.4 . 2>/dev/null; \
     cp -L /usr/lib/x86_64-linux-gnu/libxcb-ewmh.so.2 . 2>/dev/null; \
-    cp -L /usr/bin/Xwayland /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/bin/Xwayland 2>/dev/null; \
-    ls -lh /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/lib/
+    cp -L /usr/bin/Xwayland /src/zenith/build/zenith/release/bundle/bin/Xwayland 2>/dev/null; \
+    ls -lh /src/zenith/build/zenith/release/bundle/lib/
 
 # Final verification: list the bundle
 RUN echo "=== Release bundle ===" && \
-    ls -lhR /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle/ && \
+    ls -lhR /src/zenith/build/zenith/release/bundle/ && \
     echo "=== Done ==="
 
 # Final stage: just Ubuntu 22.04 for extracting the bundle
 FROM ubuntu:22.04
-ARG APP_NAME
-ARG PROJECT_DIR
 
-COPY --from=builder /src/${PROJECT_DIR}/build/${APP_NAME}/release/bundle /app/${APP_NAME}
+COPY --from=builder /src/zenith/build/zenith/release/bundle /app/zenith
 
-WORKDIR /app/${APP_NAME}
-ENV LD_LIBRARY_PATH="/app/${APP_NAME}/lib:${LD_LIBRARY_PATH}"
+WORKDIR /app/zenith
+ENV LD_LIBRARY_PATH="/app/zenith/lib:${LD_LIBRARY_PATH}"
 
-RUN printf '#!/usr/bin/env bash\nexec "/app/%s/%s" "$@"\n' "${APP_NAME}" "${APP_NAME}" > /entrypoint.sh && chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/app/zenith/zenith"]

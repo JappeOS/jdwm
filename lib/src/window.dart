@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/gestures.dart';
@@ -30,8 +31,7 @@ class TitlebarDragCallbacks extends InheritedWidget {
   });
 
   static TitlebarDragCallbacks? of(BuildContext context) {
-    return context
-        .dependOnInheritedWidgetOfExactType<TitlebarDragCallbacks>();
+    return context.dependOnInheritedWidgetOfExactType<TitlebarDragCallbacks>();
   }
 
   @override
@@ -56,6 +56,7 @@ class Window extends StatefulWidget {
 
 class _WindowState extends State<Window> {
   static const double _resizingSpacing = 8;
+  static const double _dockThickness = 10;
 
   final GlobalKey _mainContainerKey = GlobalKey();
   final GlobalKey _toolbarMeasureKey = GlobalKey();
@@ -71,6 +72,23 @@ class _WindowState extends State<Window> {
   ResizeEdge? _backendInteractiveResizeActiveEdge;
   bool _backendInteractionListenersAttached = false;
   double _measuredToolbarHeight = 0;
+  bool _backendResizeRequestInFlight = false;
+  _BackendResizeRequest? _pendingBackendResizeRequest;
+  Timer? _backendResizeDispatchTimer;
+  int _lastBackendResizeDispatchMicros = 0;
+
+  void _cancelBackendResizeDispatchTimer() {
+    _backendResizeDispatchTimer?.cancel();
+    _backendResizeDispatchTimer = null;
+  }
+
+  double _backendClientInsetTopFor(WindowEntry entry) {
+    if (entry.backendViewId == null ||
+        entry.chromeMode != WindowChromeMode.decorated) {
+      return 0;
+    }
+    return entry.backendContentInsetTop;
+  }
 
   @override
   void initState() {
@@ -99,7 +117,10 @@ class _WindowState extends State<Window> {
 
   @override
   void dispose() {
-    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onGlobalPointerEvent);
+    GestureBinding.instance.pointerRouter
+        .removeGlobalRoute(_onGlobalPointerEvent);
+    _cancelBackendResizeDispatchTimer();
+    _pendingBackendResizeRequest = null;
     _backendInteractiveMoveSubscription?.close();
     _backendInteractiveResizeSubscription?.close();
     super.dispose();
@@ -110,7 +131,8 @@ class _WindowState extends State<Window> {
       if (!mounted) {
         return;
       }
-      final box = _toolbarMeasureKey.currentContext?.findRenderObject() as RenderBox?;
+      final box =
+          _toolbarMeasureKey.currentContext?.findRenderObject() as RenderBox?;
       if (box == null || !box.hasSize) {
         return;
       }
@@ -121,9 +143,18 @@ class _WindowState extends State<Window> {
       if ((height - _measuredToolbarHeight).abs() < 0.5) {
         return;
       }
+      final entry = widget.entry;
+      if (entry.backendViewId != null &&
+          entry.chromeMode == WindowChromeMode.decorated) {
+        entry.backendContentInsetTop = height;
+      }
       setState(() {
         _measuredToolbarHeight = height;
       });
+      final manager = WindowManager.of(context);
+      if (manager != null && entry.backendViewId != null) {
+        manager.syncBackendWindowGeometry(entry, force: true);
+      }
     });
   }
 
@@ -140,7 +171,8 @@ class _WindowState extends State<Window> {
       return;
     }
     _backendInteractiveMoveSubscription = container.listen(
-      xdgToplevelStatesProvider(viewId).select((v) => v.interactiveMoveRequested),
+      xdgToplevelStatesProvider(viewId)
+          .select((v) => v.interactiveMoveRequested),
       (_, __) {
         _backendInteractiveMoveActive = true;
         _backendInteractiveResizeActiveEdge = null;
@@ -148,7 +180,8 @@ class _WindowState extends State<Window> {
       },
     );
     _backendInteractiveResizeSubscription = container.listen(
-      xdgToplevelStatesProvider(viewId).select((v) => v.interactiveResizeRequested),
+      xdgToplevelStatesProvider(viewId)
+          .select((v) => v.interactiveResizeRequested),
       (_, next) {
         _backendInteractiveResizeActiveEdge = next.edge;
         widget.entry.backendInteractiveResizeEdge = next.edge;
@@ -181,17 +214,24 @@ class _WindowState extends State<Window> {
           event.position,
         );
         _backendResizeAccumDelta += event.delta;
-        final startSize = _backendResizeStartSize ?? widget.entry.windowRect.size;
-        final sizeDelta = _computeResizeSizeDelta(edge, _backendResizeAccumDelta);
-        final targetWidth = max(widget.entry.minSize.width, startSize.width + sizeDelta.dx);
-        final targetHeight = max(widget.entry.minSize.height, startSize.height + sizeDelta.dy);
+        final startSize =
+            _backendResizeStartSize ?? widget.entry.windowRect.size;
+        final sizeDelta =
+            _computeResizeSizeDelta(edge, _backendResizeAccumDelta);
+        final targetWidth =
+            max(widget.entry.minSize.width, startSize.width + sizeDelta.dx);
+        final targetHeight =
+            max(widget.entry.minSize.height, startSize.height + sizeDelta.dy);
         final viewId = _backendViewId;
-        final container = _backendContainer(context);
-        if (viewId != null && container != null) {
-          container.read(platformApiProvider.notifier).resizeWindow(
-            viewId,
-            targetWidth.round(),
-            targetHeight.round(),
+        if (viewId != null) {
+          final rect = widget.entry.windowRect;
+          final clientInsetTop = _backendClientInsetTopFor(widget.entry);
+          _queueBackendResizeRequest(
+            viewId: viewId,
+            width: targetWidth.round(),
+            height: targetHeight.round(),
+            x: rect.left,
+            y: rect.top + clientInsetTop,
           );
         }
       }
@@ -209,6 +249,8 @@ class _WindowState extends State<Window> {
       widget.entry.backendInteractiveResizeEdge = null;
       _backendResizeStartSize = null;
       _backendResizeAccumDelta = Offset.zero;
+      _cancelBackendResizeDispatchTimer();
+      _pendingBackendResizeRequest = null;
       _rawLeft = _rawTop = _rawRight = _rawBottom = null;
       _dragRawLeft = _dragRawTop = null;
       manager?.endClientCursor();
@@ -243,15 +285,112 @@ class _WindowState extends State<Window> {
     if (viewId == null) {
       return;
     }
-    final container = _backendContainer(context);
-    if (container == null) {
+    final rect = widget.entry.windowRect;
+    final clientInsetTop = _backendClientInsetTopFor(widget.entry);
+    _queueBackendResizeRequest(
+      viewId: viewId,
+      width: rect.width.round(),
+      height: rect.height.round(),
+      x: rect.left,
+      y: rect.top + clientInsetTop,
+    );
+  }
+
+  void _queueBackendResizeRequest({
+    required int viewId,
+    required int width,
+    required int height,
+    required double x,
+    required double y,
+  }) {
+    final request = _BackendResizeRequest(
+      viewId: viewId,
+      width: width,
+      height: height,
+      x: x,
+      y: y,
+    );
+
+    if (_pendingBackendResizeRequest == request) {
       return;
     }
-    final rect = widget.entry.windowRect;
-    container.read(platformApiProvider.notifier).resizeWindow(
-      viewId,
-      rect.width.round(),
-      rect.height.round(),
+
+    _pendingBackendResizeRequest = request;
+    if (_shouldThrottleXwaylandInteractiveResize(viewId)) {
+      _scheduleThrottledBackendResizeFlush();
+      return;
+    }
+    _flushBackendResizeRequest();
+  }
+
+  bool _shouldThrottleXwaylandInteractiveResize(int viewId) {
+    if (_backendInteractiveResizeActiveEdge == null) {
+      return false;
+    }
+    final container = _backendContainer(context);
+    if (container == null) {
+      return false;
+    }
+    return container.read(platformApiProvider.notifier).isXwaylandView(viewId);
+  }
+
+  void _scheduleThrottledBackendResizeFlush() {
+    if (_backendResizeDispatchTimer != null) {
+      return;
+    }
+    const interval = Duration(milliseconds: 16);
+    final nowMicros = DateTime.now().microsecondsSinceEpoch;
+    final elapsedMicros = nowMicros - _lastBackendResizeDispatchMicros;
+    final elapsed =
+        Duration(microseconds: elapsedMicros < 0 ? 0 : elapsedMicros);
+    final delay = elapsed >= interval ? Duration.zero : interval - elapsed;
+
+    _backendResizeDispatchTimer = Timer(delay, () {
+      _backendResizeDispatchTimer = null;
+      if (!mounted) {
+        return;
+      }
+      _flushBackendResizeRequest();
+      if (_pendingBackendResizeRequest != null) {
+        _scheduleThrottledBackendResizeFlush();
+      }
+    });
+  }
+
+  void _flushBackendResizeRequest() {
+    if (_backendResizeRequestInFlight) {
+      return;
+    }
+    final request = _pendingBackendResizeRequest;
+    if (request == null) {
+      return;
+    }
+    final container = _backendContainer(context);
+    if (container == null) {
+      _pendingBackendResizeRequest = null;
+      return;
+    }
+
+    _pendingBackendResizeRequest = null;
+    _backendResizeRequestInFlight = true;
+    _lastBackendResizeDispatchMicros = DateTime.now().microsecondsSinceEpoch;
+    final api = container.read(platformApiProvider.notifier);
+    unawaited(
+      api
+          .resizeWindow(
+        request.viewId,
+        request.width,
+        request.height,
+        x: request.x,
+        y: request.y,
+      )
+          .whenComplete(() {
+        _backendResizeRequestInFlight = false;
+        if (!mounted) {
+          return;
+        }
+        _flushBackendResizeRequest();
+      }),
     );
   }
 
@@ -329,7 +468,8 @@ class _WindowState extends State<Window> {
     );
   }
 
-  Rect _backendViewportRectFromRef(WidgetRef ref, WindowEntry entry, int viewId) {
+  Rect _backendViewportRectFromRef(
+      WidgetRef ref, WindowEntry entry, int viewId) {
     return ref.watch(xdgSurfaceStatesProvider(viewId)).visibleBounds;
   }
 
@@ -340,12 +480,14 @@ class _WindowState extends State<Window> {
       value: widget.entry,
       builder: (context, child) {
         final entry = provider_pkg.Provider.of<WindowEntry>(context);
-        final hierarchy = provider_pkg.Provider.of<WindowHierarchyState>(context);
+        final hierarchy =
+            provider_pkg.Provider.of<WindowHierarchyState>(context);
 
         if (entry.minimized) return const SizedBox.shrink();
 
         final manager = WindowManager.of(context);
-        final windowRect = manager?.targetRectForWindow(entry) ?? entry.windowRect;
+        final windowRect =
+            manager?.targetRectForWindow(entry) ?? entry.windowRect;
         final docked = entry.maximized || entry.windowDock != WindowDock.normal;
         final isDecorated = entry.chromeMode == WindowChromeMode.decorated;
         final isBackendWindow = entry.backendViewId != null;
@@ -355,7 +497,9 @@ class _WindowState extends State<Window> {
 
         final alignedWindowRect = _alignRect(windowRect);
         final backendDecoratedHeightOffset =
-            isBackendDecorated && entry.usesToolbar ? _measuredToolbarHeight : 0.0;
+            isBackendDecorated && entry.usesToolbar
+                ? _measuredToolbarHeight
+                : 0.0;
 
         final windowContentChild = Listener(
           onPointerDown: (_) {
@@ -370,8 +514,8 @@ class _WindowState extends State<Window> {
           child: _buildContainer(
             isDecorated: isDecorated,
             hasBorder: isDecorated && !docked,
-            isFocused: hierarchy.entriesByFocus.isNotEmpty
-                       && hierarchy.entriesByFocus.last == entry,
+            isFocused: hierarchy.entriesByFocus.isNotEmpty &&
+                hierarchy.entriesByFocus.last == entry,
             child: Column(
               children: [
                 Visibility(
@@ -382,8 +526,7 @@ class _WindowState extends State<Window> {
                       onDragStart: _onTitlebarDragStart,
                       onDrag: _onTitlebarDrag,
                       onDragEnd: _onTitlebarDragEnd,
-                      child:
-                          entry.toolbar ?? const SizedBox.shrink(),
+                      child: entry.toolbar ?? const SizedBox.shrink(),
                     ),
                   ),
                 ),
@@ -422,6 +565,10 @@ class _WindowState extends State<Window> {
             onPanEnd: (details) {
               if (isBackendWindow) {
                 _interactiveResizeRequestedForEdge = null;
+                _backendInteractiveResizeActiveEdge = null;
+                entry.backendInteractiveResizeEdge = null;
+                _cancelBackendResizeDispatchTimer();
+                _pendingBackendResizeRequest = null;
                 _rawLeft = _rawTop = _rawRight = _rawBottom = null;
                 manager?.endClientCursor();
                 _updateMonitorFromRect(entry, manager);
@@ -457,10 +604,10 @@ class _WindowState extends State<Window> {
                       child: windowContentChild,
                     ),
                   )
-            : Positioned.fromRect(
-                rect: alignedWindowRect,
-                child: windowContentChild,
-              );
+                : Positioned.fromRect(
+                    rect: alignedWindowRect,
+                    child: windowContentChild,
+                  );
         final handleBaseRect = isBackendDecorated
             ? Rect.fromLTWH(
                 alignedWindowRect.left,
@@ -519,7 +666,8 @@ class _WindowState extends State<Window> {
     return DualBorderOutlinedContainer(
       key: _mainContainerKey,
       hasBorder: hasBorder,
-      borderRadius: hasBorder ? Theme.of(context).borderRadiusLg : BorderRadius.zero,
+      borderRadius:
+          hasBorder ? Theme.of(context).borderRadiusLg : BorderRadius.zero,
       boxShadow: hasBorder && isFocused
           ? [
               BoxShadow(
@@ -560,9 +708,7 @@ class _WindowState extends State<Window> {
     final hierarchy =
         provider_pkg.Provider.of<WindowHierarchyState>(context, listen: false);
     final manager = WindowManager.of(context);
-    final wasDocked = entry.windowDock != WindowDock.normal;
-    final docked =
-        entry.maximized || entry.windowDock != WindowDock.normal;
+    final docked = entry.maximized || entry.windowDock != WindowDock.normal;
     final restoreRect = entry.restoreRectAfterMaximize;
     final dockRestoreRect = entry.restoreRectAfterDock;
     final dragWindowSize = (entry.maximized && restoreRect != null)
@@ -572,8 +718,7 @@ class _WindowState extends State<Window> {
             : entry.windowRect.size;
 
     if (manager != null) {
-      final newMonitor =
-          manager.getMonitorAtPosition(globalPosition);
+      final newMonitor = manager.getMonitorAtPosition(globalPosition);
       if (newMonitor != null && newMonitor.id != entry.monitorId) {
         entry.monitorId = newMonitor.id;
       }
@@ -585,11 +730,11 @@ class _WindowState extends State<Window> {
 
     Rect base;
     if (docked) {
-      final dockedRect = manager?.targetRectForWindow(entry) ?? entry.windowRect;
+      final dockedRect =
+          manager?.targetRectForWindow(entry) ?? entry.windowRect;
       final relativeX =
           (globalPosition.dx - dockedRect.left) / dockedRect.width;
-      final newLeft =
-          globalPosition.dx - (dragWindowSize.width * relativeX);
+      final newLeft = globalPosition.dx - (dragWindowSize.width * relativeX);
 
       base = Rect.fromLTWH(
         newLeft,
@@ -629,7 +774,7 @@ class _WindowState extends State<Window> {
     entry.windowDock = WindowDock.normal;
 
     entry.windowRect = base;
-    if (wasDocked && entry.backendViewId != null) {
+    if (entry.backendViewId != null) {
       manager?.syncBackendWindowGeometry(entry, force: true);
     }
     setState(() {});
@@ -656,11 +801,10 @@ class _WindowState extends State<Window> {
     if (monitor == null) return;
 
     if (entry.windowRect.top < monitor.usableBounds.top) {
-      entry.windowRect
-          = entry.windowRect.translate(
-            0,
-            monitor.usableBounds.top - entry.windowRect.top,
-          );
+      entry.windowRect = entry.windowRect.translate(
+        0,
+        monitor.usableBounds.top - entry.windowRect.top,
+      );
     }
 
     final regionKey = manager.getRegionKey(monitor.id);
@@ -672,38 +816,35 @@ class _WindowState extends State<Window> {
         regionKey.currentContext?.findRenderObject() as RenderBox?;
     if (regionBox == null) return;
 
-    final localPosition =
-        regionBox.globalToLocal(globalPosition);
+    final localPosition = regionBox.globalToLocal(globalPosition);
     final localUsableWidth = monitor.usableBounds.width;
 
-    if ((localPosition.dy <= 2 && localPosition.dx <= 50) ||
-        (localPosition.dy <= 50 && localPosition.dx <= 2)) {
+    if ((localPosition.dy <= _dockThickness && localPosition.dx <= 50) ||
+        (localPosition.dy <= 50 && localPosition.dx <= _dockThickness)) {
       _captureDockRestore(entry);
       entry.windowDock = WindowDock.topLeft;
       manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
-    if ((localPosition.dy <= 2 &&
-            localPosition.dx >= localUsableWidth - 50) ||
-        (localPosition.dy <= 50 &&
-            localPosition.dx >= localUsableWidth - 2)) {
+    if ((localPosition.dy <= _dockThickness && localPosition.dx >= localUsableWidth - 50) ||
+        (localPosition.dy <= 50 && localPosition.dx >= localUsableWidth - _dockThickness)) {
       _captureDockRestore(entry);
       entry.windowDock = WindowDock.topRight;
       manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
-    if (localPosition.dy <= 2) {
+    if (localPosition.dy <= _dockThickness) {
       _requestBackendMaximize(context, true);
       entry.maximized = true;
       return;
     }
-    if (localPosition.dx <= 2) {
+    if (localPosition.dx <= _dockThickness) {
       _captureDockRestore(entry);
       entry.windowDock = WindowDock.left;
       manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
-    if (localPosition.dx >= localUsableWidth - 2) {
+    if (localPosition.dx >= localUsableWidth - _dockThickness) {
       _captureDockRestore(entry);
       entry.windowDock = WindowDock.right;
       manager.syncBackendWindowGeometry(entry, force: true);
@@ -789,22 +930,24 @@ class _WindowState extends State<Window> {
     final current = widget.entry.windowRect;
 
     // Initialize accumulators from current rect on first call of a drag gesture.
-    _rawLeft   ??= current.left;
-    _rawTop    ??= current.top;
-    _rawRight  ??= current.right;
+    _rawLeft ??= current.left;
+    _rawTop ??= current.top;
+    _rawRight ??= current.right;
     _rawBottom ??= current.bottom;
 
     // Accumulate raw (unclamped) deltas.
-    if (left)   _rawLeft   = _rawLeft!   + details.delta.dx;
-    if (top)    _rawTop    = _rawTop!    + details.delta.dy;
-    if (right)  _rawRight  = _rawRight!  + details.delta.dx;
+    if (left) _rawLeft = _rawLeft! + details.delta.dx;
+    if (top) _rawTop = _rawTop! + details.delta.dy;
+    if (right) _rawRight = _rawRight! + details.delta.dx;
     if (bottom) _rawBottom = _rawBottom! + details.delta.dy;
 
     // Derive clamped rect: left/top are clamped against right/bottom minus min size.
-    final clampedLeft  = left  ? min(_rawLeft!,  _rawRight!  - minWidth)  : current.left;
-    final clampedTop   = top   ? min(_rawTop!,   _rawBottom! - minHeight) : current.top;
-    final clampedRight = right ? _rawRight!  : current.right;
-    final clampedBottom= bottom? _rawBottom! : current.bottom;
+    final clampedLeft =
+        left ? min(_rawLeft!, _rawRight! - minWidth) : current.left;
+    final clampedTop =
+        top ? min(_rawTop!, _rawBottom! - minHeight) : current.top;
+    final clampedRight = right ? _rawRight! : current.right;
+    final clampedBottom = bottom ? _rawBottom! : current.bottom;
 
     widget.entry.windowRect = Rect.fromLTRB(
       clampedLeft,
@@ -850,4 +993,33 @@ class _WindowState extends State<Window> {
       entry.monitorId = monitor.id;
     }
   }
+}
+
+class _BackendResizeRequest {
+  final int viewId;
+  final int width;
+  final int height;
+  final double x;
+  final double y;
+
+  const _BackendResizeRequest({
+    required this.viewId,
+    required this.width,
+    required this.height,
+    required this.x,
+    required this.y,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    return other is _BackendResizeRequest &&
+        other.viewId == viewId &&
+        other.width == width &&
+        other.height == height &&
+        other.x == x &&
+        other.y == y;
+  }
+
+  @override
+  int get hashCode => Object.hash(viewId, width, height, x, y);
 }

@@ -523,6 +523,38 @@ void EmbedderState::commit_surface(const SurfaceCommitMessage& message) {
 
 		auto value = std::make_unique<EncodableValue>(map);
 		platform_method_channel->InvokeMethod("commit_surface", std::move(value));
+
+		if (message.xdg_surface.has_value() &&
+		    message.xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+			auto generic_map = EncodableMap{
+				  {EncodableValue("view_id"), EncodableValue((int64_t) message.view_id)},
+				  {EncodableValue("protocol"), EncodableValue("xdg")},
+				  {EncodableValue("x"), EncodableValue(message.xdg_surface->x)},
+				  {EncodableValue("y"), EncodableValue(message.xdg_surface->y)},
+				  {EncodableValue("width"), EncodableValue(message.xdg_surface->width)},
+				  {EncodableValue("height"), EncodableValue(message.xdg_surface->height)},
+			};
+			if (message.toplevel_decoration.has_value()) {
+				generic_map.insert({EncodableValue("has_decoration"), EncodableValue(true)});
+				generic_map.insert({EncodableValue("decoration"), EncodableValue((int64_t) *message.toplevel_decoration)});
+			} else {
+				generic_map.insert({EncodableValue("has_decoration"), EncodableValue(false)});
+			}
+			if (message.toplevel_title.has_value()) {
+				generic_map.insert({EncodableValue("has_title"), EncodableValue(true)});
+				generic_map.insert({EncodableValue("title"), EncodableValue(*message.toplevel_title)});
+			} else {
+				generic_map.insert({EncodableValue("has_title"), EncodableValue(false)});
+			}
+			if (message.toplevel_app_id.has_value()) {
+				generic_map.insert({EncodableValue("has_app_id"), EncodableValue(true)});
+				generic_map.insert({EncodableValue("app_id"), EncodableValue(*message.toplevel_app_id)});
+			} else {
+				generic_map.insert({EncodableValue("has_app_id"), EncodableValue(false)});
+			}
+			auto generic_value = std::make_unique<EncodableValue>(std::move(generic_map));
+			platform_method_channel->InvokeMethod("commit_toplevel_surface", std::move(generic_value));
+		}
 	});
 }
 
@@ -533,15 +565,90 @@ void EmbedderState::map_xdg_surface(size_t view_id, int role) {
 			  {EncodableValue("role"),    EncodableValue((int64_t) role)},
 		});
 		platform_method_channel->InvokeMethod("map_xdg_surface", std::move(value));
+		if (role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+			auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
+				  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+				  {EncodableValue("protocol"), EncodableValue("xdg")},
+			});
+			platform_method_channel->InvokeMethod("map_toplevel_surface", std::move(generic_value));
+		}
 	});
 }
 
-void EmbedderState::unmap_xdg_surface(size_t view_id) {
+void EmbedderState::unmap_xdg_surface(size_t view_id, int role) {
 	callable_queue.enqueue([=] {
 		auto value = std::make_unique<EncodableValue>(EncodableMap{
 			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
 		});
 		platform_method_channel->InvokeMethod("unmap_xdg_surface", std::move(value));
+		if (role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+			auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
+				  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+				  {EncodableValue("protocol"), EncodableValue("xdg")},
+			});
+			platform_method_channel->InvokeMethod("unmap_toplevel_surface", std::move(generic_value));
+		}
+	});
+}
+
+void EmbedderState::map_toplevel_surface(size_t view_id, const std::string& protocol) {
+	callable_queue.enqueue([=] {
+		auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
+			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+			  {EncodableValue("protocol"), EncodableValue(protocol)},
+		});
+		platform_method_channel->InvokeMethod("map_toplevel_surface", std::move(generic_value));
+	});
+}
+
+void EmbedderState::unmap_toplevel_surface(size_t view_id, const std::string& protocol) {
+	callable_queue.enqueue([=] {
+		auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
+			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+			  {EncodableValue("protocol"), EncodableValue(protocol)},
+		});
+		platform_method_channel->InvokeMethod("unmap_toplevel_surface", std::move(generic_value));
+	});
+}
+
+void EmbedderState::commit_toplevel_surface(size_t view_id,
+                                            const std::string& protocol,
+                                            int x,
+                                            int y,
+                                            int width,
+                                            int height,
+                                            std::optional<ToplevelDecoration> decoration,
+                                            std::optional<std::string> title,
+                                            std::optional<std::string> app_id) {
+	callable_queue.enqueue([=] {
+		auto generic_map = EncodableMap{
+			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+			  {EncodableValue("protocol"), EncodableValue(protocol)},
+			  {EncodableValue("x"), EncodableValue((int64_t) x)},
+			  {EncodableValue("y"), EncodableValue((int64_t) y)},
+			  {EncodableValue("width"), EncodableValue((int64_t) width)},
+			  {EncodableValue("height"), EncodableValue((int64_t) height)},
+		};
+		if (decoration.has_value()) {
+			generic_map.insert({EncodableValue("has_decoration"), EncodableValue(true)});
+			generic_map.insert({EncodableValue("decoration"), EncodableValue((int64_t) *decoration)});
+		} else {
+			generic_map.insert({EncodableValue("has_decoration"), EncodableValue(false)});
+		}
+		if (title.has_value()) {
+			generic_map.insert({EncodableValue("has_title"), EncodableValue(true)});
+			generic_map.insert({EncodableValue("title"), EncodableValue(*title)});
+		} else {
+			generic_map.insert({EncodableValue("has_title"), EncodableValue(false)});
+		}
+		if (app_id.has_value()) {
+			generic_map.insert({EncodableValue("has_app_id"), EncodableValue(true)});
+			generic_map.insert({EncodableValue("app_id"), EncodableValue(*app_id)});
+		} else {
+			generic_map.insert({EncodableValue("has_app_id"), EncodableValue(false)});
+		}
+		auto generic_value = std::make_unique<EncodableValue>(std::move(generic_map));
+		platform_method_channel->InvokeMethod("commit_toplevel_surface", std::move(generic_value));
 	});
 }
 
@@ -604,34 +711,59 @@ void EmbedderState::interactive_resize(size_t view_id, xdg_toplevel_resize_edge 
 	});
 }
 
-void EmbedderState::set_window_title(size_t view_id, const std::string& title) {
+void EmbedderState::set_window_title(size_t view_id, const std::string& title, const std::string& protocol) {
 	callable_queue.enqueue([=] {
-		auto value = std::make_unique<EncodableValue>(EncodableMap{
+		if (protocol == "xdg") {
+			auto value = std::make_unique<EncodableValue>(EncodableMap{
+				  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+				  {EncodableValue("title"),   EncodableValue(title)},
+			});
+			platform_method_channel->InvokeMethod("set_title", std::move(value));
+		}
+		auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
 			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+			  {EncodableValue("protocol"), EncodableValue(protocol)},
 			  {EncodableValue("title"),   EncodableValue(title)},
 		});
-		platform_method_channel->InvokeMethod("set_title", std::move(value));
+		platform_method_channel->InvokeMethod("set_toplevel_title", std::move(generic_value));
 	});
 }
 
-void EmbedderState::set_app_id(size_t view_id, const std::string& app_id) {
+void EmbedderState::set_app_id(size_t view_id, const std::string& app_id, const std::string& protocol) {
 	callable_queue.enqueue([=] {
-		auto value = std::make_unique<EncodableValue>(EncodableMap{
+		if (protocol == "xdg") {
+			auto value = std::make_unique<EncodableValue>(EncodableMap{
+				  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+				  {EncodableValue("app_id"),  EncodableValue(app_id)},
+			});
+			platform_method_channel->InvokeMethod("set_app_id", std::move(value));
+		}
+		auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
 			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+			  {EncodableValue("protocol"), EncodableValue(protocol)},
 			  {EncodableValue("app_id"),  EncodableValue(app_id)},
 		});
-		platform_method_channel->InvokeMethod("set_app_id", std::move(value));
+		platform_method_channel->InvokeMethod("set_toplevel_app_id", std::move(generic_value));
 	});
 }
 
-void EmbedderState::set_window_state(size_t view_id, bool maximized, bool visible) {
+void EmbedderState::set_window_state(size_t view_id, bool maximized, bool visible, const std::string& protocol) {
 	callable_queue.enqueue([=] {
-		auto value = std::make_unique<EncodableValue>(EncodableMap{
+		if (protocol == "xdg") {
+			auto value = std::make_unique<EncodableValue>(EncodableMap{
+				  {EncodableValue("view_id"),    EncodableValue((int64_t) view_id)},
+				  {EncodableValue("maximized"),  EncodableValue(maximized)},
+				  {EncodableValue("visible"),    EncodableValue(visible)},
+			});
+			platform_method_channel->InvokeMethod("set_window_state", std::move(value));
+		}
+		auto generic_value = std::make_unique<EncodableValue>(EncodableMap{
 			  {EncodableValue("view_id"),    EncodableValue((int64_t) view_id)},
+			  {EncodableValue("protocol"),   EncodableValue(protocol)},
 			  {EncodableValue("maximized"),  EncodableValue(maximized)},
 			  {EncodableValue("visible"),    EncodableValue(visible)},
 		});
-		platform_method_channel->InvokeMethod("set_window_state", std::move(value));
+		platform_method_channel->InvokeMethod("set_toplevel_state", std::move(generic_value));
 	});
 }
 

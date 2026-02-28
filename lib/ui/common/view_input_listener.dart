@@ -5,8 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
-import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
-import 'package:jdwm/src/core/models/toplevel_decoration.dart';
 import 'package:jdwm/src/input/mouse_button_tracker.dart';
 import 'package:jdwm/src/input/pointer_focus_manager.dart';
 
@@ -32,12 +30,27 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
 
   @override
   Widget build(BuildContext context) {
-    Rect inputRegion = ref.watch(surfaceStatesProvider(widget.viewId).select((v) => v.inputRegion));
-    Rect visibleBounds = ref.watch(xdgSurfaceStatesProvider(widget.viewId).select((v) => v.visibleBounds));
-    final decoration = ref.watch(xdgToplevelStatesProvider(widget.viewId).select((v) => v.decoration));
-    final eventRegion = decoration == ToplevelDecoration.serverSide
-        ? (visibleBounds.size.isEmpty ? inputRegion : visibleBounds)
-        : (inputRegion.size.isEmpty ? visibleBounds : inputRegion);
+    final isXwaylandView =
+        ref.read(platformApiProvider.notifier).isXwaylandView(widget.viewId);
+    Rect inputRegion = ref.watch(
+        surfaceStatesProvider(widget.viewId).select((v) => v.inputRegion));
+    final surfaceSize = ref.watch(
+        surfaceStatesProvider(widget.viewId).select((v) => v.surfaceSize));
+    Rect visibleBounds = ref.watch(
+        xdgSurfaceStatesProvider(widget.viewId).select((v) => v.visibleBounds));
+    final fullSurfaceRegion = Rect.fromLTWH(
+      0,
+      0,
+      surfaceSize.width,
+      surfaceSize.height,
+    );
+    // Prefer compositor-visible bounds for hit-testing. Some X11/Xwayland apps
+    // expose input regions that don't match the actual rendered surface.
+    final eventRegion = isXwaylandView
+        ? fullSurfaceRegion
+        : (visibleBounds.size.isEmpty
+            ? (inputRegion.size.isEmpty ? fullSurfaceRegion : inputRegion)
+            : visibleBounds);
 
     return Stack(
       clipBehavior: Clip.none,
@@ -52,14 +65,16 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
               _onPointerDown(event, eventRegion.topLeft);
               return null;
             },
-            onPointerMove: (PointerMoveEvent event, GestureDisposition? disposition) {
+            onPointerMove:
+                (PointerMoveEvent event, GestureDisposition? disposition) {
               if (disposition == GestureDisposition.rejected) {
                 return;
               }
               _onPointerMove(event, eventRegion.topLeft);
               return null;
             },
-            onPointerUp: (PointerUpEvent event, GestureDisposition? disposition) {
+            onPointerUp:
+                (PointerUpEvent event, GestureDisposition? disposition) {
               if (disposition == GestureDisposition.rejected) {
                 return null;
               }
@@ -88,7 +103,8 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
     );
   }
 
-  Future<void> _onPointerDown(PointerEvent event, Offset inputRegionTopLeft) async {
+  Future<void> _onPointerDown(
+      PointerEvent event, Offset inputRegionTopLeft) async {
     var position = event.localPosition + inputRegionTopLeft;
 
     if (event.kind == PointerDeviceKind.mouse) {
@@ -96,11 +112,14 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
       await _sendMouseButtonsToPlatform(event.buttons);
       pointerFocusManager.startPotentialDrag();
     } else if (event.kind == PointerDeviceKind.touch) {
-      await ref.read(platformApiProvider.notifier).touchDown(widget.viewId, event.pointer, position);
+      await ref
+          .read(platformApiProvider.notifier)
+          .touchDown(widget.viewId, event.pointer, position);
     }
   }
 
-  Future<void> _onPointerMove(PointerEvent event, Offset inputRegionTopLeft) async {
+  Future<void> _onPointerMove(
+      PointerEvent event, Offset inputRegionTopLeft) async {
     var position = event.localPosition + inputRegionTopLeft;
 
     if (event.kind == PointerDeviceKind.mouse) {
@@ -108,7 +127,9 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
       await _sendMouseButtonsToPlatform(event.buttons);
       await _pointerMoved(position);
     } else if (event.kind == PointerDeviceKind.touch) {
-      await ref.read(platformApiProvider.notifier).touchMotion(event.pointer, position);
+      await ref
+          .read(platformApiProvider.notifier)
+          .touchMotion(event.pointer, position);
     }
   }
 
@@ -126,7 +147,9 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
       await _sendMouseButtonsToPlatform(0);
       pointerFocusManager.stopPotentialDrag();
     } else if (lastPointerEvent.kind == PointerDeviceKind.touch) {
-      await ref.read(platformApiProvider.notifier).touchCancel(lastPointerEvent.pointer);
+      await ref
+          .read(platformApiProvider.notifier)
+          .touchCancel(lastPointerEvent.pointer);
     }
   }
 
@@ -138,10 +161,13 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
   }
 
   Future<void> _mouseButtonEvent(MouseButtonEvent event) {
-    return ref.read(platformApiProvider.notifier).sendMouseButtonEventToView(event.button, event.state == MouseButtonState.pressed);
+    return ref.read(platformApiProvider.notifier).sendMouseButtonEventToView(
+        event.button, event.state == MouseButtonState.pressed);
   }
 
   Future<void> _pointerMoved(Offset position) {
-    return ref.read(platformApiProvider.notifier).pointerHoversView(widget.viewId, position);
+    return ref
+        .read(platformApiProvider.notifier)
+        .pointerHoversView(widget.viewId, position);
   }
 }

@@ -56,7 +56,7 @@ class WindowManagerState extends State<WindowManager> {
   final Map<int, WindowEntry> _backendWindows = {};
   final Map<int, List<ProviderSubscription>> _backendSubscriptions = {};
   final Map<int, VoidCallback> _backendFocusNodeDetachers = {};
-  final Map<int, Size> _lastRequestedBackendSizes = {};
+  final Map<int, Rect> _lastRequestedBackendGeometries = {};
   final Set<int> _backendInitialPlacementDone = {};
   List<MonitorConfig> _effectiveMonitors = const [];
 
@@ -205,7 +205,7 @@ class WindowManagerState extends State<WindowManager> {
       icon: const AssetImage('assets/cursor/grabbing.png'),
       backendViewId: viewId,
       content: XdgToplevelSurface(
-        key: ValueKey('xdg_$viewId'),
+        key: ValueKey('toplevel_$viewId'),
         viewId: viewId,
       ),
     );
@@ -238,7 +238,7 @@ class WindowManagerState extends State<WindowManager> {
 
     final detachFocus = _backendFocusNodeDetachers.remove(viewId);
     detachFocus?.call();
-    _lastRequestedBackendSizes.remove(viewId);
+    _lastRequestedBackendGeometries.remove(viewId);
     _backendInitialPlacementDone.remove(viewId);
   }
 
@@ -297,14 +297,8 @@ class WindowManagerState extends State<WindowManager> {
             entry.windowDock = WindowDock.normal;
             final restoreRect = entry.restoreRectAfterMaximize;
             if (restoreRect != null) {
-              final backendViewId = entry.backendViewId;
-              if (backendViewId != null) {
-                _backendContainer!
-                    .read(xdgToplevelStatesProvider(backendViewId).notifier)
-                    .resize(
-                        restoreRect.width.round(), restoreRect.height.round());
-              }
               entry.windowRect = restoreRect;
+              syncBackendWindowGeometry(entry, force: true);
               entry.restoreRectAfterMaximize = null;
             }
             final restoreMonitorId = entry.restoreMonitorIdAfterMaximize;
@@ -328,6 +322,9 @@ class WindowManagerState extends State<WindowManager> {
           entry.chromeMode = next == ToplevelDecoration.serverSide
               ? WindowChromeMode.decorated
               : WindowChromeMode.borderless;
+          if (entry.chromeMode != WindowChromeMode.decorated) {
+            entry.backendContentInsetTop = 0;
+          }
           _updateBackendWindowSizeFromState(viewId, entry);
         },
         fireImmediately: true,
@@ -365,6 +362,7 @@ class WindowManagerState extends State<WindowManager> {
                 _applyInitialBackendWindowPlacement(entry, size: nextRect.size);
             if (placed) {
               _backendInitialPlacementDone.add(viewId);
+              syncBackendWindowGeometry(entry, force: true);
               return;
             }
           }
@@ -531,6 +529,16 @@ class WindowManagerState extends State<WindowManager> {
     }
 
     final targetViewId = entry.backendViewId;
+    if (targetViewId != null) {
+      final targetFocusNode =
+          container.read(xdgToplevelStatesProvider(targetViewId)).focusNode;
+      if (targetFocusNode.hasFocus) {
+        container.read(platformApiProvider.notifier).activateWindow(
+              targetViewId,
+              true,
+            );
+      }
+    }
     for (final viewId in _backendWindows.keys) {
       final focusNode =
           container.read(xdgToplevelStatesProvider(viewId)).focusNode;
@@ -642,17 +650,26 @@ class WindowManagerState extends State<WindowManager> {
       return;
     }
     final target = targetRectForWindow(entry);
-    final desiredSize =
-        Size(target.width.roundToDouble(), target.height.roundToDouble());
-    final lastSent = _lastRequestedBackendSizes[backendViewId];
-    if (!force && lastSent != null && lastSent == desiredSize) {
+    final clientInsetTop = entry.chromeMode == WindowChromeMode.decorated
+        ? entry.backendContentInsetTop
+        : 0.0;
+    final desiredGeometry = Rect.fromLTWH(
+      target.left.roundToDouble(),
+      (target.top + clientInsetTop).roundToDouble(),
+      target.width.roundToDouble(),
+      target.height.roundToDouble(),
+    );
+    final lastSent = _lastRequestedBackendGeometries[backendViewId];
+    if (!force && lastSent != null && lastSent == desiredGeometry) {
       return;
     }
     container.read(xdgToplevelStatesProvider(backendViewId).notifier).resize(
-          desiredSize.width.round(),
-          desiredSize.height.round(),
+          desiredGeometry.width.round(),
+          desiredGeometry.height.round(),
+          x: desiredGeometry.left,
+          y: desiredGeometry.top,
         );
-    _lastRequestedBackendSizes[backendViewId] = desiredSize;
+    _lastRequestedBackendGeometries[backendViewId] = desiredGeometry;
   }
 
   void _syncBackendManagedWindowSizes() {
@@ -786,6 +803,7 @@ class WindowManagerState extends State<WindowManager> {
       );
       if (placed) {
         _backendInitialPlacementDone.add(viewId);
+        syncBackendWindowGeometry(backendEntry.value, force: true);
       }
     }
   }

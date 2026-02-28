@@ -6,6 +6,8 @@
 #include <list>           // if you use std::list anywhere
 #include <mutex>
 #include <array>
+#include <optional>
+#include <string>
 #include "embedder.h"
 #include "platform_channels/binary_messenger.hpp"
 #include "platform_channels/incoming_message_dispatcher.hpp"
@@ -53,7 +55,21 @@ struct EmbedderState {
 
 	void map_xdg_surface(size_t view_id, int role);
 
-	void unmap_xdg_surface(size_t view_id);
+	void unmap_xdg_surface(size_t view_id, int role);
+
+	void map_toplevel_surface(size_t view_id, const std::string& protocol);
+
+	void unmap_toplevel_surface(size_t view_id, const std::string& protocol);
+
+	void commit_toplevel_surface(size_t view_id,
+	                             const std::string& protocol,
+	                             int x,
+	                             int y,
+	                             int width,
+	                             int height,
+	                             std::optional<ToplevelDecoration> decoration = std::nullopt,
+	                             std::optional<std::string> title = std::nullopt,
+	                             std::optional<std::string> app_id = std::nullopt);
 
 	void map_subsurface(size_t view_id);
 
@@ -65,11 +81,11 @@ struct EmbedderState {
 
 	void interactive_resize(size_t view_id, xdg_toplevel_resize_edge edge);
 
-	void set_window_title(size_t view_id, const std::string& title);
+	void set_window_title(size_t view_id, const std::string& title, const std::string& protocol = "xdg");
 
-	void set_app_id(size_t view_id, const std::string& app_id);
+	void set_app_id(size_t view_id, const std::string& app_id, const std::string& protocol = "xdg");
 
-	void set_window_state(size_t view_id, bool maximized, bool visible);
+	void set_window_state(size_t view_id, bool maximized, bool visible, const std::string& protocol = "xdg");
 
 	void publish_monitor_layout();
 

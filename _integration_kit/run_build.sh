@@ -203,7 +203,8 @@ run_docker_build() {
     set -e
     cd /work/${PROJECT_DIR}
     export LDFLAGS='-L/usr/local/lib -L/usr/local/lib/x86_64-linux-gnu -Wl,-rpath,/usr/local/lib -Wl,-rpath,/usr/local/lib/x86_64-linux-gnu'
-    make ${build_target} FLUTTER=/work/${PROJECT_DIR}/vendor/flutter_clone/bin/flutter WLR_ROOT=/work/${PROJECT_DIR}/vendor/wlroots-install WLR_SRC_ROOT=/work/${PROJECT_DIR}/vendor/wlroots BACKEND_DIR=/work/${PROJECT_DIR}/vendor/jdwm/native
+    export PKG_CONFIG_PATH=/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:\${PKG_CONFIG_PATH:-}
+    make ${build_target} FLUTTER=/work/${PROJECT_DIR}/vendor/flutter_clone/bin/flutter WLR_ROOT=/usr/local WLR_SRC_ROOT=/work/${PROJECT_DIR}/vendor/wlroots BACKEND_DIR=/work/${PROJECT_DIR}/vendor/jdwm/native
   "
 }
 
@@ -250,6 +251,7 @@ export_bundle() {
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH:-}"
+export PATH="${DIR}/bin:${PATH}"
 exec "${DIR}/__APP_NAME__" "$@"
 SCRIPT
   sed -i "s/__APP_NAME__/${TARGET}/g" "${out_dir}/run_${TARGET}.sh"
@@ -264,7 +266,7 @@ copy_runtime_deps_from_image() {
   out_dir="$(bundle_out_dir "${mode}")"
 
   mkdir -p "${out_dir}/lib"
-  local libs=(libliftoff.so.0 libdisplay-info.so.2 libwayland-server.so.0 libwayland-client.so.0 libpixman-1.so.0 libdrm.so.2 libseat.so.1)
+  local libs=(libliftoff.so.0 libdisplay-info.so.2 libwayland-server.so.0 libwayland-client.so.0 libpixman-1.so.0 libdrm.so.2 libseat.so.1 libX11-xcb.so.1 libxcb.so.1 libxcb-composite.so.0 libxcb-render-util.so.0 libxcb-render.so.0 libxcb-res.so.0 libxcb-xfixes.so.0 libxcb-icccm.so.4 libxcb-ewmh.so.2)
   local copied=0
   local cid=""
 
@@ -296,6 +298,30 @@ copy_runtime_deps_from_image() {
       docker cp "${cid}:/usr/lib/x86_64-linux-gnu/${lib}" "${out_dir}/lib/${lib}" >/dev/null 2>&1 || true
     done
     docker rm "${cid}" >/dev/null
+  fi
+
+  mkdir -p "${out_dir}/bin"
+  local have_xwayland=0
+  if docker image inspect "${RUNTIME_IMAGE}" >/dev/null 2>&1; then
+    local runtime_cid=""
+    runtime_cid="$(docker create "${RUNTIME_IMAGE}")"
+    if docker cp "${runtime_cid}:/app/${TARGET}/bin/Xwayland" "${out_dir}/bin/Xwayland" >/dev/null 2>&1; then
+      chmod +x "${out_dir}/bin/Xwayland" || true
+      have_xwayland=1
+    fi
+    docker rm "${runtime_cid}" >/dev/null
+  fi
+  if (( have_xwayland == 0 )) && docker image inspect "${BUILDER_IMAGE}" >/dev/null 2>&1; then
+    local builder_cid=""
+    builder_cid="$(docker create "${BUILDER_IMAGE}")"
+    if docker cp "${builder_cid}:/usr/bin/Xwayland" "${out_dir}/bin/Xwayland" >/dev/null 2>&1; then
+      chmod +x "${out_dir}/bin/Xwayland" || true
+      have_xwayland=1
+    fi
+    docker rm "${builder_cid}" >/dev/null
+  fi
+  if (( have_xwayland == 0 )); then
+    echo "Warning: Xwayland binary not bundled; host /usr/bin/Xwayland is required for X11 apps."
   fi
 
   local missing=()

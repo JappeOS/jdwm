@@ -20,7 +20,8 @@ final xdgToplevelControllerProvider = Provider<XdgToplevelController>(
 @Riverpod(keepAlive: true)
 XdgToplevelSurface xdgToplevelSurfaceWidget(Ref ref, int viewId) {
   return XdgToplevelSurface(
-    key: ref.watch(xdgSurfaceStatesProvider(viewId).select((state) => state.widgetKey)),
+    key: ref.watch(
+        xdgSurfaceStatesProvider(viewId).select((state) => state.widgetKey)),
     viewId: viewId,
   );
 }
@@ -64,7 +65,9 @@ class XdgToplevelStates extends _$XdgToplevelStates {
 
   void requestVisible(bool value) {
     if (value != state.visible) {
-      ref.read(platformApiProvider.notifier).changeWindowVisibility(viewId, value);
+      ref
+          .read(platformApiProvider.notifier)
+          .changeWindowVisibility(viewId, value);
     }
   }
 
@@ -74,18 +77,25 @@ class XdgToplevelStates extends _$XdgToplevelStates {
 
   void setWindowState({required bool visible, required bool maximized}) {
     var snapshot = _toSnapshot(state);
-    snapshot = ref.read(xdgToplevelControllerProvider).setVisible(snapshot, visible);
-    snapshot = ref.read(xdgToplevelControllerProvider).setMaximized(snapshot, maximized);
+    snapshot =
+        ref.read(xdgToplevelControllerProvider).setVisible(snapshot, visible);
+    snapshot = ref
+        .read(xdgToplevelControllerProvider)
+        .setMaximized(snapshot, maximized);
     state = _fromSnapshot(snapshot);
   }
 
-  void resize(int width, int height) {
-    ref.read(platformApiProvider.notifier).resizeWindow(viewId, width, height);
+  void resize(int width, int height, {double? x, double? y}) {
+    ref
+        .read(platformApiProvider.notifier)
+        .resizeWindow(viewId, width, height, x: x, y: y);
   }
 
   void requestInteractiveMove() {
     state = _fromSnapshot(
-      ref.read(xdgToplevelControllerProvider).requestInteractiveMove(_toSnapshot(state)),
+      ref
+          .read(xdgToplevelControllerProvider)
+          .requestInteractiveMove(_toSnapshot(state)),
     );
   }
 
@@ -99,19 +109,25 @@ class XdgToplevelStates extends _$XdgToplevelStates {
 
   void setDecoration(ToplevelDecoration decoration) {
     state = _fromSnapshot(
-      ref.read(xdgToplevelControllerProvider).setDecoration(_toSnapshot(state), decoration),
+      ref
+          .read(xdgToplevelControllerProvider)
+          .setDecoration(_toSnapshot(state), decoration),
     );
   }
 
   void setTitle(String title) {
     state = _fromSnapshot(
-      ref.read(xdgToplevelControllerProvider).setTitle(_toSnapshot(state), title),
+      ref
+          .read(xdgToplevelControllerProvider)
+          .setTitle(_toSnapshot(state), title),
     );
   }
 
   void setAppId(String appId) {
     state = _fromSnapshot(
-      ref.read(xdgToplevelControllerProvider).setAppId(_toSnapshot(state), appId),
+      ref
+          .read(xdgToplevelControllerProvider)
+          .setAppId(_toSnapshot(state), appId),
     );
   }
 
