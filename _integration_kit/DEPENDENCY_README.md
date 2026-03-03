@@ -16,9 +16,12 @@ mkdir -p vendor
 git submodule add https://github.com/JappeOS/jdwm.git vendor/jdwm
 ```
 
-## 3) Add a path dependency in `pubspec.yaml`
+## 3) Add a path dependency in `pubspec.yaml` and verify SDK version
 
 ```yaml
+environment:
+  sdk: ">=3.8.0 <4.0.0"
+
 dependencies:
   jdwm:
     path: vendor/jdwm

@@ -8,12 +8,10 @@
 #include "output/zenith_output_manager.hpp"
 #include <unistd.h>
 #include <cstdlib>
-#include <cmath>
 
 extern "C" {
 #include <libdrm/drm_fourcc.h>
 #include <GLES2/gl2ext.h>
-#include <pixman.h>
 #define static
 #include <wlr/render/gles2.h>
 #include <wlr/util/log.h>
@@ -112,26 +110,11 @@ static void set_scene_buffer_with_damage(
 	if (output->scene_buffer == nullptr) {
 		return;
 	}
-
-	auto damage_regions = damage_source->get_damage_regions();
-	if (damage_regions.size() == 0) {
-		wlr_scene_buffer_set_buffer(output->scene_buffer, buffer);
-		return;
-	}
-
-	pixman_region32_t damage;
-	pixman_region32_init(&damage);
-	for (const auto& rect: damage_regions) {
-		int x = (int) std::floor(rect.left);
-		int y = (int) std::floor(rect.top);
-		int width = (int) std::ceil(rect.right - rect.left);
-		int height = (int) std::ceil(rect.bottom - rect.top);
-		if (width > 0 && height > 0) {
-			pixman_region32_union_rect(&damage, &damage, x, y, (uint32_t) width, (uint32_t) height);
-		}
-	}
-	wlr_scene_buffer_set_buffer_with_damage(output->scene_buffer, buffer, &damage);
-	pixman_region32_fini(&damage);
+	(void)damage_source;
+	// Force a full scene-buffer update. The current partial-damage propagation
+	// can desynchronize with Flutter's render target history and leave stale
+	// pixels, which is especially visible on blurred widgets.
+	wlr_scene_buffer_set_buffer(output->scene_buffer, buffer);
 }
 
 static bool should_force_software_cursor() {

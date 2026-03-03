@@ -85,7 +85,10 @@ void EmbedderState::configure_and_run_engine() {
 	config.open_gl.make_resource_current = flutter_make_resource_current;
 	config.open_gl.fbo_reset_after_present = true;
 	config.open_gl.surface_transformation = flutter_surface_transformation;
-	config.open_gl.populate_existing_damage = flutter_populate_existing_damage;
+	// Disable partial repaint for now. The current damage bookkeeping between
+	// Flutter FBOs and scene presentation can produce stale regions (especially
+	// visible with BackdropFilter/blur), so force full-frame rasterization.
+	config.open_gl.populate_existing_damage = nullptr;
 
 	FlutterTaskRunnerDescription platform_task_runner_description{};
 	platform_task_runner_description.struct_size = sizeof(FlutterTaskRunnerDescription);
