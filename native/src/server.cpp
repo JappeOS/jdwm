@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/eventfd.h>
 #include <cstdlib>
+#include <string>
 
 extern "C" {
 #define static
@@ -44,6 +45,37 @@ ZenithServer* ZenithServer::instance() {
 static float read_display_scale();
 static void detach_active_pointer_constraint_listener(ZenithServer* server);
 static void server_xwayland_ready(wl_listener* listener, void* data);
+static void zenith_preflight_libseat();
+
+static bool path_exists(const char* path) {
+	return path != nullptr && access(path, F_OK) == 0;
+}
+
+static void zenith_preflight_libseat() {
+	const char* libseat_backend = std::getenv("LIBSEAT_BACKEND");
+	const bool has_seatd_socket = path_exists("/run/seatd.sock");
+	const bool has_system_bus = path_exists("/run/dbus/system_bus_socket");
+
+	if (libseat_backend != nullptr) {
+		const std::string backend(libseat_backend);
+		if (backend == "seatd" && !has_seatd_socket) {
+			wlr_log(WLR_ERROR,
+			        "zenith: LIBSEAT_BACKEND=seatd but /run/seatd.sock is missing. "
+			        "Install+start seatd, or unset LIBSEAT_BACKEND (or set it to logind) to use systemd-logind.");
+		} else if (backend == "logind" && !has_system_bus) {
+			wlr_log(WLR_ERROR,
+			        "zenith: LIBSEAT_BACKEND=logind but /run/dbus/system_bus_socket is missing. "
+			        "Start a system D-Bus (e.g. dbus/dbus-broker) or use seatd instead.");
+		}
+		return;
+	}
+
+	if (!has_system_bus && !has_seatd_socket) {
+		wlr_log(WLR_ERROR,
+		        "zenith: no seat management backend detected (missing /run/dbus/system_bus_socket and /run/seatd.sock). "
+		        "Install+start system D-Bus/systemd-logind, or install+start seatd.");
+	}
+}
 
 ZenithServer::ZenithServer() {
 	main_thread_id = std::this_thread::get_id();
@@ -61,6 +93,7 @@ ZenithServer::ZenithServer() {
 		exit(1);
 	}
 
+	zenith_preflight_libseat();
 	backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
 	if (backend == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots backend");

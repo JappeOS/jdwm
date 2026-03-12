@@ -107,7 +107,7 @@ Build and run normally:
 ./run_build.sh --run
 ```
 
-If JDWM backend codde is modified, you may need to do a clean build:
+If JDWM backend code is modified, you may need to do a clean build:
 ```bash
 make clean
 ./run_build.sh --run
