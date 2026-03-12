@@ -114,3 +114,10 @@ make clean
 ```
 
 That produces runnable bundles under `build/jappeos/<arch>/<debug|profile|release>/bundle/`.
+
+## 12) Maintenance
+
+Update the submodule using the following command:
+```bash
+git submodule update --remote
+```
