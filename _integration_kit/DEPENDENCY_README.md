@@ -97,7 +97,19 @@ Copy the `_integration_kit/.vscode/` directory into the root of your project so 
 
 ## 11) Build and run
 
+Run the following command before building the first time:
 ```bash
+./run_build.sh build-image
+```
+
+Build and run normally:
+```bash
+./run_build.sh --run
+```
+
+If JDWM backend codde is modified, you may need to do a clean build:
+```bash
+make clean
 ./run_build.sh --run
 ```
 
