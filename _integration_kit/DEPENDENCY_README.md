@@ -102,6 +102,10 @@ Run the following command before building the first time:
 ./run_build.sh build-image
 ```
 
+If you see `libseat` errors like `No backend matched name 'logind'`, you're likely running with a `libseat`
+build that was compiled without `logind` support (requires `libsystemd`). Ensure you're using a `libseat`
+package/build with `logind` enabled, or use the `seatd` backend instead.
+
 Build and run normally:
 ```bash
 ./run_build.sh --run

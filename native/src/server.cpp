@@ -45,16 +45,59 @@ ZenithServer* ZenithServer::instance() {
 static float read_display_scale();
 static void detach_active_pointer_constraint_listener(ZenithServer* server);
 static void server_xwayland_ready(wl_listener* listener, void* data);
+static void zenith_maybe_default_libseat_backend();
 static void zenith_preflight_libseat();
 
 static bool path_exists(const char* path) {
 	return path != nullptr && access(path, F_OK) == 0;
 }
 
+static bool env_equals(const char* env_value, const char* expected) {
+	return env_value != nullptr && expected != nullptr && std::string(env_value) == expected;
+}
+
+static void zenith_maybe_default_libseat_backend() {
+	// libseat prefers logind on systemd systems. That works great when we're launched from a real
+	// VT-backed logind session (PAM), but it often fails when launched as a systemd service/transient
+	// unit without a TTY/session context, because logind then requires polkit (interactive auth) for
+	// session activation/device control. In those cases, seatd is the safer default when available.
+	if (std::getenv("LIBSEAT_BACKEND") != nullptr) {
+		return;
+	}
+
+	const bool has_seatd_socket = path_exists("/run/seatd.sock");
+	if (!has_seatd_socket) {
+		return;
+	}
+
+	const char* xdg_session_id = std::getenv("XDG_SESSION_ID");
+	const char* xdg_session_type = std::getenv("XDG_SESSION_TYPE");
+	const char* xdg_vtnr = std::getenv("XDG_VTNR");
+	const bool has_display_env =
+		std::getenv("WAYLAND_DISPLAY") != nullptr || std::getenv("DISPLAY") != nullptr;
+
+	const bool looks_like_logind_tty_session =
+		xdg_session_id != nullptr && xdg_session_id[0] != '\0' && xdg_vtnr != nullptr &&
+		xdg_vtnr[0] != '\0' && !has_display_env &&
+		(xdg_session_type == nullptr || std::string(xdg_session_type) == "tty");
+
+	if (!looks_like_logind_tty_session) {
+		setenv("LIBSEAT_BACKEND", "seatd", 0);
+		wlr_log(WLR_INFO,
+		        "zenith: LIBSEAT_BACKEND not set and no VT-backed logind session detected; "
+		        "defaulting to LIBSEAT_BACKEND=seatd (override by setting LIBSEAT_BACKEND).");
+	}
+}
+
 static void zenith_preflight_libseat() {
 	const char* libseat_backend = std::getenv("LIBSEAT_BACKEND");
 	const bool has_seatd_socket = path_exists("/run/seatd.sock");
 	const bool has_system_bus = path_exists("/run/dbus/system_bus_socket");
+	const char* xdg_session_id = std::getenv("XDG_SESSION_ID");
+	const char* xdg_session_type = std::getenv("XDG_SESSION_TYPE");
+	const char* xdg_vtnr = std::getenv("XDG_VTNR");
+	const bool has_display_env =
+		std::getenv("WAYLAND_DISPLAY") != nullptr || std::getenv("DISPLAY") != nullptr;
 
 	if (libseat_backend != nullptr) {
 		const std::string backend(libseat_backend);
@@ -66,6 +109,29 @@ static void zenith_preflight_libseat() {
 			wlr_log(WLR_ERROR,
 			        "zenith: LIBSEAT_BACKEND=logind but /run/dbus/system_bus_socket is missing. "
 			        "Start a system D-Bus (e.g. dbus/dbus-broker) or use seatd instead.");
+		} else if (backend == "logind") {
+			if (xdg_session_id == nullptr || xdg_session_id[0] == '\0') {
+				wlr_log(WLR_ERROR,
+				        "zenith: LIBSEAT_BACKEND=logind but XDG_SESSION_ID is not set. "
+				        "Logind sessions are created by PAM (e.g. logging in on a TTY); "
+				        "starting from ssh/sudo/systemd services often won't work for DRM.");
+			}
+			if (has_display_env) {
+				wlr_log(WLR_ERROR,
+				        "zenith: LIBSEAT_BACKEND=logind while DISPLAY/WAYLAND_DISPLAY is set. "
+				        "For the DRM backend, run from a real TTY (not from inside another desktop session).");
+			}
+			if (xdg_session_type != nullptr && std::string(xdg_session_type) != "tty") {
+				wlr_log(WLR_ERROR,
+				        "zenith: LIBSEAT_BACKEND=logind but XDG_SESSION_TYPE=%s. "
+				        "For the DRM backend, start from a TTY login session (XDG_SESSION_TYPE=tty).",
+				        xdg_session_type);
+			}
+			if (xdg_vtnr == nullptr || xdg_vtnr[0] == '\0') {
+				wlr_log(WLR_ERROR,
+				        "zenith: LIBSEAT_BACKEND=logind but XDG_VTNR is not set. "
+				        "This usually means you're not running on a real virtual terminal.");
+			}
 		}
 		return;
 	}
@@ -93,8 +159,29 @@ ZenithServer::ZenithServer() {
 		exit(1);
 	}
 
+	const bool user_specified_libseat_backend = std::getenv("LIBSEAT_BACKEND") != nullptr;
+	zenith_maybe_default_libseat_backend();
 	zenith_preflight_libseat();
+
+	const bool has_seatd_socket = path_exists("/run/seatd.sock");
+	const bool has_system_bus = path_exists("/run/dbus/system_bus_socket");
 	backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
+	if (backend == nullptr && !user_specified_libseat_backend) {
+		// Retry once with the alternative backend when available, to be more robust in
+		// systemd service/transient-unit scenarios.
+		const char* current = std::getenv("LIBSEAT_BACKEND");
+		if (has_seatd_socket && !env_equals(current, "seatd")) {
+			wlr_log(WLR_INFO, "zenith: retrying wlroots backend creation with LIBSEAT_BACKEND=seatd");
+			setenv("LIBSEAT_BACKEND", "seatd", 1);
+			backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
+		}
+		current = std::getenv("LIBSEAT_BACKEND");
+		if (backend == nullptr && has_system_bus && !env_equals(current, "logind")) {
+			wlr_log(WLR_INFO, "zenith: retrying wlroots backend creation with LIBSEAT_BACKEND=logind");
+			setenv("LIBSEAT_BACKEND", "logind", 1);
+			backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
+		}
+	}
 	if (backend == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots backend");
 		exit(2);
