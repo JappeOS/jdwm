@@ -26,6 +26,68 @@ extern "C" {
 #undef static
 }
 
+namespace {
+
+std::optional<uint64_t> flutter_specified_logical_key(xkb_keysym_t keysym) {
+	// Based on Flutter's LogicalKeyboardKey constants.
+	switch (keysym) {
+		case XKB_KEY_Meta_L:
+			return 0x00200000106;
+		case XKB_KEY_Meta_R:
+			return 0x00200000107;
+		case XKB_KEY_Super_L:
+		case XKB_KEY_Super_R:
+			return 0x0010000010e;
+		case XKB_KEY_XF86MonBrightnessDown:
+			return 0x00100000601;
+		case XKB_KEY_XF86MonBrightnessUp:
+			return 0x00100000602;
+#ifdef XKB_KEY_XF86AudioPlayPause
+		case XKB_KEY_XF86AudioPlayPause:
+			return 0x00100000a05;
+#endif
+		case XKB_KEY_XF86AudioStop:
+			return 0x00100000a07;
+		case XKB_KEY_XF86AudioNext:
+			return 0x00100000a08;
+		case XKB_KEY_XF86AudioPrev:
+			return 0x00100000a09;
+		case XKB_KEY_XF86AudioLowerVolume:
+			return 0x00100000a0f;
+		case XKB_KEY_XF86AudioRaiseVolume:
+			return 0x00100000a10;
+		case XKB_KEY_XF86AudioMute:
+			return 0x00100000a11;
+		case XKB_KEY_XF86AudioForward:
+			return 0x00100000d2c;
+		case XKB_KEY_XF86AudioCycleTrack:
+			return 0x00100000d2d;
+		case XKB_KEY_XF86AudioPause:
+			return 0x00100000d2e;
+		case XKB_KEY_XF86AudioPlay:
+			return 0x00100000d2f;
+		case XKB_KEY_XF86AudioRecord:
+			return 0x00100000d30;
+		case XKB_KEY_XF86AudioRewind:
+			return 0x00100000d31;
+		case XKB_KEY_XF86AudioMedia:
+			return 0x00100000d50;
+		case XKB_KEY_XF86TopMenu:
+			return 0x00100000d55;
+		default:
+			break;
+	}
+
+	// Preserve existing behavior for plain ASCII logical keys.
+	if (keysym < 128) {
+		return static_cast<uint64_t>(keysym);
+	}
+
+	return std::nullopt;
+}
+
+}
+
 EmbedderState::EmbedderState(wlr_egl* flutter_gl_context, wlr_egl* flutter_resource_gl_context)
 	  : message_dispatcher(&messenger),
 	    flutter_gl_context(flutter_gl_context),
@@ -335,9 +397,8 @@ void EmbedderState::send_key_event(const KeyboardKeyEventMessage& message) {
 		json.AddMember("toolkit", "gtk", json.GetAllocator());
 		json.AddMember("scanCode", message.scan_code, json.GetAllocator());
 		json.AddMember("keyCode", message.keysym, json.GetAllocator());
-		// https://github.com/flutter/engine/blob/2a8ac1e0ca2535a6af17dde3530d277ecd601543/shell/platform/linux/fl_keyboard_manager.cc#L96
-		if (message.keysym < 128) {
-			json.AddMember("specifiedLogicalKey", message.keysym, json.GetAllocator());
+		if (auto logical_key = flutter_specified_logical_key(message.keysym); logical_key.has_value()) {
+			json.AddMember("specifiedLogicalKey", *logical_key, json.GetAllocator());
 		}
 		json.AddMember("modifiers", message.modifiers, json.GetAllocator());
 		// Normally I would also set `unicodeScalarValues`, but I don't anticipate using this feature.
@@ -362,12 +423,16 @@ void EmbedderState::send_key_event(const KeyboardKeyEventMessage& message) {
 		}
 
 		key_event_channel->Send(json, [this, message](const uint8_t* reply, size_t reply_size) {
-			auto obj = flutter::JsonMessageCodec::GetInstance().DecodeMessage(reply, reply_size);
-			if (obj == nullptr) {
-				return;
+			bool handled = false;
+			if (reply != nullptr && reply_size > 0) {
+				auto obj = flutter::JsonMessageCodec::GetInstance().DecodeMessage(reply, reply_size);
+				if (obj != nullptr && obj->IsObject()) {
+					auto handled_it = obj->GetObject().FindMember("handled");
+					if (handled_it != obj->GetObject().MemberEnd() && handled_it->value.IsBool()) {
+						handled = handled_it->value.GetBool();
+					}
+				}
 			}
-			auto& handled_object = obj->GetObject()["handled"];
-			bool handled = handled_object.GetBool();
 			if (handled) {
 				return;
 			}

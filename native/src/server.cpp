@@ -10,7 +10,10 @@
 #include "xwayland_debug.hpp"
 #include <unistd.h>
 #include <sys/eventfd.h>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <set>
 #include <string>
 
 extern "C" {
@@ -47,6 +50,7 @@ static void detach_active_pointer_constraint_listener(ZenithServer* server);
 static void server_xwayland_ready(wl_listener* listener, void* data);
 static void zenith_maybe_default_libseat_backend();
 static void zenith_preflight_libseat();
+static void zenith_debug_log_loaded_libs();
 
 static bool path_exists(const char* path) {
 	return path != nullptr && access(path, F_OK) == 0;
@@ -143,6 +147,49 @@ static void zenith_preflight_libseat() {
 	}
 }
 
+static void zenith_debug_log_loaded_libs() {
+	const char* enabled = std::getenv("ZENITH_DEBUG_LOADED_LIBS");
+	if (enabled == nullptr || std::string(enabled) != "1") {
+		return;
+	}
+
+	const char* ld_library_path = std::getenv("LD_LIBRARY_PATH");
+	wlr_log(WLR_INFO, "zenith: LD_LIBRARY_PATH=%s", ld_library_path != nullptr ? ld_library_path : "(unset)");
+
+	FILE* f = std::fopen("/proc/self/maps", "r");
+	if (f == nullptr) {
+		wlr_log(WLR_ERROR, "zenith: failed to open /proc/self/maps for debugging");
+		return;
+	}
+
+	std::set<std::string> libs;
+	char buf[4096];
+	while (std::fgets(buf, sizeof(buf), f) != nullptr) {
+		char* path = std::strchr(buf, '/');
+		if (path == nullptr) {
+			continue;
+		}
+
+		if (std::strstr(path, "libdrm.so") == nullptr && std::strstr(path, "libgbm.so") == nullptr &&
+		    std::strstr(path, "libEGL.so") == nullptr && std::strstr(path, "libGLES") == nullptr &&
+		    std::strstr(path, "libwayland-") == nullptr) {
+			continue;
+		}
+
+		char* nl = std::strchr(path, '\n');
+		if (nl != nullptr) {
+			*nl = '\0';
+		}
+		libs.insert(std::string(path));
+	}
+
+	std::fclose(f);
+
+	for (const auto& lib : libs) {
+		wlr_log(WLR_INFO, "zenith: loaded-lib: %s", lib.c_str());
+	}
+}
+
 ZenithServer::ZenithServer() {
 	main_thread_id = std::this_thread::get_id();
 	wlr_log(WLR_INFO, "zenith: build version=%s commit=%s built=%s",
@@ -187,7 +234,14 @@ ZenithServer::ZenithServer() {
 		exit(2);
 	}
 
+	zenith_debug_log_loaded_libs();
 	renderer = wlr_renderer_autocreate(backend);
+	if (renderer == nullptr) {
+		wlr_log(WLR_ERROR,
+		        "Could not create wlroots renderer (EGL/GLES2 init failed). "
+		        "Check your EGL/GBM/Mesa setup, or build wlroots with a software renderer fallback.");
+		exit(3);
+	}
 	if (!wlr_renderer_init_wl_display(renderer, display)) {
 		wlr_log(WLR_ERROR, "Could not initialize wlroots renderer");
 		exit(3);

@@ -304,7 +304,9 @@ export_bundle() {
 #!/usr/bin/env bash
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH:-}"
+# Prefer system libraries first to avoid bundling conflicts (notably Mesa/EGL vs bundled libdrm/wayland).
+# Still keeps the bundle lib dir available for libwlroots and other shipped deps.
+export LD_LIBRARY_PATH="/usr/lib:/lib:${DIR}/lib:${LD_LIBRARY_PATH:-}"
 export PATH="${DIR}/bin:${PATH}"
 exec "${DIR}/__APP_NAME__" "$@"
 SCRIPT
