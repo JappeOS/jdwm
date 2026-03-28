@@ -28,15 +28,22 @@ extern "C" {
 
 namespace {
 
-std::optional<uint64_t> flutter_specified_logical_key(xkb_keysym_t keysym) {
+std::optional<uint64_t> flutter_specified_logical_key(xkb_keysym_t keysym, xkb_keycode_t scan_code) {
+	// Linux evdev LEFTMETA/RIGHTMETA (keycodes 125/126, plus xkb +8 offset) are
+	// the physical "Super/Windows" keys. Force these to Super to keep behavior
+	// consistent across keymaps that report Meta_* vs Super_* symbols.
+	if (scan_code == 133 || scan_code == 134) {
+		return 0x0010000010e;
+	}
+
 	// Based on Flutter's LogicalKeyboardKey constants.
 	switch (keysym) {
 		case XKB_KEY_Meta_L:
-			return 0x00200000106;
 		case XKB_KEY_Meta_R:
-			return 0x00200000107;
 		case XKB_KEY_Super_L:
 		case XKB_KEY_Super_R:
+		case XKB_KEY_Hyper_L:
+		case XKB_KEY_Hyper_R:
 			return 0x0010000010e;
 		case XKB_KEY_XF86MonBrightnessDown:
 			return 0x00100000601;
@@ -397,7 +404,7 @@ void EmbedderState::send_key_event(const KeyboardKeyEventMessage& message) {
 		json.AddMember("toolkit", "gtk", json.GetAllocator());
 		json.AddMember("scanCode", message.scan_code, json.GetAllocator());
 		json.AddMember("keyCode", message.keysym, json.GetAllocator());
-		if (auto logical_key = flutter_specified_logical_key(message.keysym); logical_key.has_value()) {
+		if (auto logical_key = flutter_specified_logical_key(message.keysym, message.scan_code); logical_key.has_value()) {
 			json.AddMember("specifiedLogicalKey", *logical_key, json.GetAllocator());
 		}
 		json.AddMember("modifiers", message.modifiers, json.GetAllocator());

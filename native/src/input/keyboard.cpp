@@ -79,9 +79,31 @@ void keyboard_handle_key(wl_listener* listener, void* data) {
 	// https://code.woboq.org/gtk/include/xkbcommon/xkbcommon.h.html#160
 	xkb_keycode_t scan_code = event->keycode + 8;
 
-	xkb_keysym_t keysym = xkb_state_key_get_one_sym(wlr_keyboard_from_input_device(keyboard->device)->xkb_state, scan_code);
+	wlr_keyboard* wlr_keyboard = wlr_keyboard_from_input_device(keyboard->device);
+	xkb_state* state = wlr_keyboard->xkb_state;
+	xkb_keysym_t keysym = xkb_state_key_get_one_sym(state, scan_code);
 
-	uint32_t modifiers = wlr_keyboard_get_modifiers(wlr_keyboard_from_input_device(keyboard->device));
+	uint32_t modifiers = wlr_keyboard_get_modifiers(wlr_keyboard);
+	bool super_like_key = keysym == XKB_KEY_Super_L || keysym == XKB_KEY_Super_R ||
+	                      keysym == XKB_KEY_Meta_L || keysym == XKB_KEY_Meta_R ||
+	                      keysym == XKB_KEY_Hyper_L || keysym == XKB_KEY_Hyper_R;
+	auto is_mod_active = [state](const char* mod_name) {
+		return xkb_state_mod_name_is_active(state, mod_name, XKB_STATE_MODS_EFFECTIVE) > 0;
+	};
+	bool super_modifier_active = is_mod_active("Mod4") || is_mod_active("Super") ||
+	                             is_mod_active("Meta") || is_mod_active("Hyper");
+	if (super_modifier_active) {
+		modifiers |= WLR_MODIFIER_LOGO;
+	} else {
+		modifiers &= ~WLR_MODIFIER_LOGO;
+	}
+	if (super_like_key) {
+		if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+			modifiers |= WLR_MODIFIER_LOGO;
+		} else {
+			modifiers &= ~WLR_MODIFIER_LOGO;
+		}
+	}
 
 	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		bool shortcut_handled = handle_shortcuts(keyboard, modifiers, keysym);

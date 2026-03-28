@@ -99,8 +99,8 @@ void zenith_xdg_toplevel_destroy(wl_listener* listener, void* data) {
 void zenith_xdg_toplevel_commit(wl_listener* listener, void* data) {
 	ZenithXdgToplevel* zenith_xdg_toplevel = wl_container_of(listener, zenith_xdg_toplevel, commit);
 	wlr_xdg_surface* xdg_surface = zenith_xdg_toplevel->xdg_toplevel->base;
-	wlr_log(WLR_INFO, "zenith: toplevel commit, initial_commit=%d, initialized=%d, configured=%d",
-	        xdg_surface->initial_commit, xdg_surface->initialized, xdg_surface->configured);
+	/*wlr_log(WLR_INFO, "zenith: toplevel commit, initial_commit=%d, initialized=%d, configured=%d",
+	        xdg_surface->initial_commit, xdg_surface->initialized, xdg_surface->configured);*/
 	if (!xdg_surface->configured) {
 		// Apply any pending decoration mode before the initial configure.
 		// Clients like Chromium send request_mode before the first commit, so
