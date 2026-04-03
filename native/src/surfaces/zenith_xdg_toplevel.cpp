@@ -164,12 +164,19 @@ void ZenithXdgToplevel::focus(bool focus) const {
 			}
 		}
 	} else {
+		const bool is_surface_currently_focused = seat->keyboard_state.focused_surface == surface;
 		for (auto& text_input: server->text_inputs) {
-			if (wl_resource_get_client(text_input->wlr_text_input->resource) == client) {
-				text_input->leave();
+			if (wl_resource_get_client(text_input->wlr_text_input->resource) != client) {
+				continue;
 			}
+			if (text_input->wlr_text_input->focused_surface == nullptr) {
+				continue;
+			}
+			text_input->leave();
 		}
-		wlr_seat_keyboard_notify_clear_focus(seat);
+		if (is_surface_currently_focused) {
+			wlr_seat_keyboard_notify_clear_focus(seat);
+		}
 		if (xdg_toplevel->base->initialized) {
 			wlr_xdg_toplevel_set_activated(xdg_toplevel, false);
 		}

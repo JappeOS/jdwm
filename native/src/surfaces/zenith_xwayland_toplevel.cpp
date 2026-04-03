@@ -213,7 +213,9 @@ void ZenithXwaylandToplevel::focus(bool focus_value) const {
 			text_input->leave();
 		}
 	}
-	wlr_seat_keyboard_notify_clear_focus(seat);
+	if (seat->keyboard_state.focused_surface == surface) {
+		wlr_seat_keyboard_notify_clear_focus(seat);
+	}
 	wlr_xwayland_surface_activate(xwayland_surface, false);
 }
 

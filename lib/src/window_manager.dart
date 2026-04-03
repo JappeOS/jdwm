@@ -578,14 +578,10 @@ class WindowManagerState extends State<WindowManager> {
 
     final targetViewId = entry.backendViewId;
     if (targetViewId != null) {
-      final targetFocusNode =
-          container.read(xdgToplevelStatesProvider(targetViewId)).focusNode;
-      if (targetFocusNode.hasFocus) {
-        container.read(platformApiProvider.notifier).activateWindow(
-              targetViewId,
-              true,
-            );
-      }
+      container.read(platformApiProvider.notifier).activateWindow(
+            targetViewId,
+            true,
+          );
     }
     for (final viewId in _backendWindows.keys) {
       final focusNode =
