@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <queue>
 #include "util/embedder/mouse_button_tracker.hpp"
 
@@ -32,6 +33,7 @@ private:
 	bool forced_hidden = false;
 	bool manual_lock = false;
 	bool client_lock = false;
+	std::string cursor_name;
 
 	public:
 		bool is_visible() const {
@@ -45,6 +47,7 @@ private:
 		void set_visible(bool value);
 		void set_forced_hidden(bool value);
 		void reveal_from_input_activity();
+		void set_cursor_name(const char* value);
 		void set_manual_locked(bool value);
 		void set_client_locked(bool value);
 		void restore_default_cursor();

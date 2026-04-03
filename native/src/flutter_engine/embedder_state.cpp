@@ -311,11 +311,11 @@ void EmbedderState::register_platform_api() {
 				  server->callable_queue.enqueue([server, kind] {
 					  if (server->pointer != nullptr) {
 						  auto iter = g_cursor_image_mapping.find(kind);
-						  const char* cursor = "default";
+						  const char* cursor = "left_ptr";
 						  if (iter != g_cursor_image_mapping.end()) {
 							  cursor = iter->second;
 						  }
-						  wlr_cursor_set_xcursor(server->pointer->cursor, server->pointer->cursor_mgr, cursor);
+						  server->pointer->set_cursor_name(cursor);
 					  }
 				  });
 				  result->Success();

@@ -56,7 +56,7 @@ void ZenithPointer::set_visible(bool value) {
 	}
 	visible = value;
 	if (visible) {
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "left_ptr");
+		wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
 	} else {
 		wlr_cursor_set_surface(cursor, nullptr, 0, 0);
 	}
@@ -80,6 +80,19 @@ void ZenithPointer::reveal_from_input_activity() {
 	set_visible(true);
 }
 
+void ZenithPointer::set_cursor_name(const char* value) {
+	const char* next = (value != nullptr && value[0] != '\0') ? value : "left_ptr";
+	if (cursor_name == next) {
+		return;
+	}
+	cursor_name = next;
+	if (!visible) {
+		return;
+	}
+	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
+	schedule_cursor_frame(server);
+}
+
 void ZenithPointer::set_manual_locked(bool value) {
 	if (manual_lock == value) {
 		return;
@@ -95,11 +108,7 @@ void ZenithPointer::set_client_locked(bool value) {
 }
 
 void ZenithPointer::restore_default_cursor() {
-	if (!visible) {
-		return;
-	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, "left_ptr");
-	schedule_cursor_frame(server);
+	set_cursor_name("left_ptr");
 }
 
 ZenithPointer::ZenithPointer(ZenithServer* server)
@@ -124,7 +133,7 @@ ZenithPointer::ZenithPointer(ZenithServer* server)
 			cursor_mgr = fallback;
 		}
 	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, "left_ptr");
+	set_cursor_name("left_ptr");
 
 	/*
 	 * wlr_cursor *only* displays an image on screen. It does not move around

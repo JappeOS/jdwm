@@ -174,8 +174,8 @@ void pointer_exit(ZenithServer* server,
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 		zenith::xwayland_input::log_pointer_focus_debug("after-clear-focus", server, 0, nullptr, 0.0, 0.0, false, false);
 		server_update_pointer_constraint(server);
-		if (server->pointer != nullptr && server->pointer->is_visible()) {
-			wlr_cursor_set_xcursor(server->pointer->cursor, server->pointer->cursor_mgr, "left_ptr");
+		if (server->pointer != nullptr) {
+			server->pointer->set_cursor_name("left_ptr");
 		}
 	});
 	result->Success();
