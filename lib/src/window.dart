@@ -56,7 +56,7 @@ class Window extends StatefulWidget {
 
 class _WindowState extends State<Window> {
   static const double _resizingSpacing = 8;
-  static const double _dockThickness = 10;
+  static const double _dockThickness = 35;
 
   final GlobalKey _mainContainerKey = GlobalKey();
   final GlobalKey _toolbarMeasureKey = GlobalKey();
@@ -823,7 +823,7 @@ class _WindowState extends State<Window> {
       manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
-    if (localPosition.dy <= _dockThickness) {
+    if (localPosition.dy <= _dockThickness / 2) {
       _requestBackendMaximize(context, true);
       entry.maximized = true;
       return;
