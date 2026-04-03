@@ -332,10 +332,11 @@ void ZenithXwaylandToplevel::handle_unmap() {
 		}
 		if (server->seat->pointer_state.focused_surface == surface) {
 			wlr_seat_pointer_notify_clear_focus(server->seat);
-			if (server->pointer != nullptr) {
-				server->pointer->restore_default_cursor();
-			}
 		}
+	}
+	if (server->pointer != nullptr && server->pointer->is_visible()) {
+		// Prevent stale client cursor surfaces from a just-unmapped window.
+		server->pointer->restore_default_cursor();
 	}
 
 	if (is_mapped && registered && managed()) {

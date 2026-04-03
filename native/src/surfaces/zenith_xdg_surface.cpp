@@ -95,9 +95,10 @@ void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
 
 	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
 		wlr_seat_pointer_notify_clear_focus(server->seat);
-		if (server->pointer != nullptr) {
-			server->pointer->restore_default_cursor();
-		}
+	}
+	if (server->pointer != nullptr && server->pointer->is_visible()) {
+		// Prevent stale client cursor surfaces from a just-unmapped window.
+		server->pointer->restore_default_cursor();
 	}
 	server->embedder_state->unmap_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
 	server->output_manager->schedule_compositor_frame();
@@ -123,9 +124,10 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 
 	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
 		wlr_seat_pointer_notify_clear_focus(server->seat);
-		if (server->pointer != nullptr) {
-			server->pointer->restore_default_cursor();
-		}
+	}
+	if (server->pointer != nullptr && server->pointer->is_visible()) {
+		// Prevent stale client cursor surfaces from a just-destroyed window.
+		server->pointer->restore_default_cursor();
 	}
 
 	if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
