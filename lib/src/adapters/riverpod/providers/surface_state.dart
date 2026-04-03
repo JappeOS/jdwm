@@ -4,7 +4,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:jdwm/src/core/controllers/surface_controller.dart';
 import 'package:jdwm/src/core/models/surface_role.dart';
-import 'package:jdwm/ui/common/surface.dart';
+import 'package:jdwm/src/ui/common/surface.dart';
 
 part 'surface_state.freezed.dart';
 

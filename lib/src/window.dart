@@ -10,7 +10,7 @@ import 'package:jdwm/src/backend/platform_api.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
-import 'package:jdwm/util/rect_overflow_box.dart';
+import 'package:jdwm/src/util/rect_overflow_box.dart';
 
 import 'window_manager.dart';
 import 'window_entry.dart';

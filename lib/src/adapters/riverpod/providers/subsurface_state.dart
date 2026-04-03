@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:jdwm/src/core/controllers/subsurface_controller.dart';
-import 'package:jdwm/ui/common/subsurface.dart';
+import 'package:jdwm/src/ui/common/subsurface.dart';
 
 part 'subsurface_state.freezed.dart';
 

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
-import 'package:jdwm/ui/common/popup.dart';
+import 'package:jdwm/src/ui/common/popup.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/core/controllers/xdg_popup_controller.dart';
 

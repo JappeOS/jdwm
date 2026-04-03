@@ -6,18 +6,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
-import 'package:jdwm/src/backend/platform_api.dart';
-import 'package:jdwm/ui/common/popup_stack.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/core/models/toplevel_decoration.dart';
-import 'package:jdwm/ui/common/xdg_toplevel_surface.dart';
 
+import '../zenith_backend.dart';
 import 'client_cursor.dart';
 import 'monitor_region.dart';
 import 'window_entry.dart';
 import 'window_hierarchy.dart';
+
+@immutable
+class ManagedWindowInfo {
+  const ManagedWindowInfo({
+    required this.viewId,
+    required this.protocol,
+    required this.title,
+    required this.appId,
+    required this.visible,
+    required this.maximized,
+    required this.focused,
+  });
+
+  final int viewId;
+  final String protocol;
+  final String title;
+  final String appId;
+  final bool visible;
+  final bool maximized;
+  final bool focused;
+}
 
 class WindowManager extends StatefulWidget {
   final List<MonitorConfig> monitors;
@@ -58,6 +77,7 @@ class WindowManagerState extends State<WindowManager> {
   final Map<int, VoidCallback> _backendFocusNodeDetachers = {};
   final Map<int, Rect> _lastRequestedBackendGeometries = {};
   final Set<int> _backendInitialPlacementDone = {};
+  final Set<VoidCallback> _windowStateListeners = <VoidCallback>{};
   List<MonitorConfig> _effectiveMonitors = const [];
 
   Widget? _clientCursor;
@@ -66,6 +86,20 @@ class WindowManagerState extends State<WindowManager> {
   ProviderSubscription? _windowUnmappedSubscription;
   ProviderSubscription? _monitorListSubscription;
   List<MonitorConfig> _backendMonitorConfigs = const [];
+
+  void addWindowStateListener(VoidCallback listener) {
+    _windowStateListeners.add(listener);
+  }
+
+  void removeWindowStateListener(VoidCallback listener) {
+    _windowStateListeners.remove(listener);
+  }
+
+  void _notifyWindowStateListeners() {
+    for (final listener in _windowStateListeners.toList(growable: false)) {
+      listener();
+    }
+  }
 
   @override
   void initState() {
@@ -221,6 +255,7 @@ class WindowManagerState extends State<WindowManager> {
     requestFocus(entry);
 
     _attachBackendListeners(viewId, entry);
+    _notifyWindowStateListeners();
   }
 
   void _removeBackendWindow(int viewId) {
@@ -240,6 +275,7 @@ class WindowManagerState extends State<WindowManager> {
     detachFocus?.call();
     _lastRequestedBackendGeometries.remove(viewId);
     _backendInitialPlacementDone.remove(viewId);
+    _notifyWindowStateListeners();
   }
 
   void _attachBackendListeners(int viewId, WindowEntry entry) {
@@ -266,6 +302,7 @@ class WindowManagerState extends State<WindowManager> {
         (_, next) {
           if (next.isNotEmpty && entry.title != next) {
             entry.title = next;
+            _notifyWindowStateListeners();
           }
         },
       ),
@@ -276,6 +313,7 @@ class WindowManagerState extends State<WindowManager> {
         xdgToplevelStatesProvider(viewId).select((v) => v.visible),
         (_, next) {
           entry.minimized = !next;
+          _notifyWindowStateListeners();
         },
         fireImmediately: true,
       ),
@@ -307,6 +345,7 @@ class WindowManagerState extends State<WindowManager> {
               entry.restoreMonitorIdAfterMaximize = null;
             }
           }
+          _notifyWindowStateListeners();
         },
         fireImmediately: true,
       ),
@@ -326,6 +365,7 @@ class WindowManagerState extends State<WindowManager> {
             entry.backendContentInsetTop = 0;
           }
           _updateBackendWindowSizeFromState(viewId, entry);
+          _notifyWindowStateListeners();
         },
         fireImmediately: true,
       ),
@@ -367,6 +407,7 @@ class WindowManagerState extends State<WindowManager> {
             }
           }
           entry.windowRect = _clampRectToMonitorUsableBounds(entry, nextRect);
+          _notifyWindowStateListeners();
         },
         fireImmediately: true,
       ),
@@ -486,6 +527,7 @@ class WindowManagerState extends State<WindowManager> {
       entry.monitorId = targetMonitorId;
     }
     _hierarchyKey.currentState?.pushWindowEntry(entry);
+    _notifyWindowStateListeners();
   }
 
   void popWindow(WindowEntry entry) {
@@ -503,6 +545,7 @@ class WindowManagerState extends State<WindowManager> {
         requestFocus(remaining.last);
       }
     }
+    _notifyWindowStateListeners();
   }
 
   List<WindowEntry> getAllWindows() {
@@ -554,6 +597,41 @@ class WindowManagerState extends State<WindowManager> {
     }
 
     _prepareBackendMaximizeForWindow(entry);
+    _notifyWindowStateListeners();
+  }
+
+  List<ManagedWindowInfo> getManagedWindowsByFocus() {
+    final container = _backendContainer;
+    if (container == null) {
+      return const <ManagedWindowInfo>[];
+    }
+    final focusedEntry = _hierarchyKey.currentState?.entriesByFocus.lastOrNull;
+    final focusedViewId = focusedEntry?.backendViewId;
+    final infos = <ManagedWindowInfo>[];
+    for (final entry in _hierarchyKey.currentState?.entriesByFocus ??
+        const <WindowEntry>[]) {
+      final viewId = entry.backendViewId;
+      if (viewId == null) {
+        continue;
+      }
+      final state = container.read(xdgToplevelStatesProvider(viewId));
+      final protocol =
+          container.read(platformApiProvider.notifier).isXwaylandView(viewId)
+              ? "xwayland"
+              : "xdg";
+      infos.add(
+        ManagedWindowInfo(
+          viewId: viewId,
+          protocol: protocol,
+          title: state.title,
+          appId: state.appId,
+          visible: state.visible,
+          maximized: state.maximized,
+          focused: focusedViewId == viewId,
+        ),
+      );
+    }
+    return infos;
   }
 
   void prepareBackendMaximizeForWindow(WindowEntry entry) {

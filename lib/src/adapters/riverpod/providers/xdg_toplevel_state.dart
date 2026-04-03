@@ -7,7 +7,7 @@ import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/core/controllers/xdg_toplevel_controller.dart';
 import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/core/models/toplevel_decoration.dart';
-import 'package:jdwm/ui/common/xdg_toplevel_surface.dart';
+import 'package:jdwm/src/ui/common/xdg_toplevel_surface.dart';
 
 part 'xdg_toplevel_state.freezed.dart';
 

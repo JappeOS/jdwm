@@ -4,7 +4,7 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
-import 'package:jdwm/ui/common/popup_stack.dart';
+import 'package:jdwm/src/ui/common/popup_stack.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/subsurface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_popup_state.dart';
@@ -92,6 +92,21 @@ class BackendMonitorList extends _$BackendMonitorList {
 class PlatformApi extends _$PlatformApi {
   final Set<int> _genericToplevelViewIds = <int>{};
   final Map<int, String> _genericToplevelProtocols = <int, String>{};
+  final Map<int, BackendWindowInfo> _toplevelWindows =
+      <int, BackendWindowInfo>{};
+
+  /// A snapshot of currently mapped toplevel windows.
+  List<BackendWindowInfo> get currentOpenWindows =>
+      List<BackendWindowInfo>.unmodifiable(state.windowInventorySnapshot);
+
+  /// Emits a new inventory whenever mapped toplevel windows change.
+  Stream<BackendWindowInventoryUpdate> get openWindowsUpdates =>
+      state.windowInventoryStream;
+
+  /// Groups currently mapped windows by app id (suitable for dock/taskbar grouping).
+  Map<String, List<BackendWindowInfo>> groupCurrentOpenWindowsByAppId() {
+    return groupBackendWindowsByAppId(currentOpenWindows);
+  }
 
   @override
   PlatformApiState build() => PlatformApiState();
@@ -160,6 +175,9 @@ class PlatformApi extends _$PlatformApi {
           );
       }
     });
+
+    _publishWindowInventory(
+        changeType: BackendWindowInventoryChangeType.snapshot);
   }
 
   Future<void> startupComplete() {
@@ -441,15 +459,22 @@ class PlatformApi extends _$PlatformApi {
     }
 
     bool hasToplevelTitle = event["has_toplevel_title"];
+    String? toplevelTitle;
     if (hasToplevelTitle && !useGenericToplevelPath) {
       String title = event["toplevel_title"];
+      toplevelTitle = title;
       ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(title);
     }
 
     bool hasToplevelAppId = event["has_toplevel_app_id"];
+    String? toplevelAppId;
     if (hasToplevelAppId && !useGenericToplevelPath) {
       String appId = event["toplevel_app_id"];
+      toplevelAppId = appId;
       ref.read(xdgToplevelStatesProvider(viewId).notifier).setAppId(appId);
+    }
+    if (toplevelTitle != null || toplevelAppId != null) {
+      _upsertWindowInfo(viewId, title: toplevelTitle, appId: toplevelAppId);
     }
   }
 
@@ -553,6 +578,7 @@ class PlatformApi extends _$PlatformApi {
           ref
               .read(xdgToplevelStatesProvider(viewId).notifier)
               .setTitle(rawTitle);
+          _upsertWindowInfo(viewId, title: rawTitle);
         }
         break;
       case "set_toplevel_app_id":
@@ -561,6 +587,7 @@ class PlatformApi extends _$PlatformApi {
           ref
               .read(xdgToplevelStatesProvider(viewId).notifier)
               .setAppId(rawAppId);
+          _upsertWindowInfo(viewId, appId: rawAppId);
         }
         break;
       case "set_toplevel_state":
@@ -570,6 +597,11 @@ class PlatformApi extends _$PlatformApi {
           ref
               .read(xdgToplevelStatesProvider(viewId).notifier)
               .setWindowState(visible: rawVisible, maximized: rawMaximized);
+          _upsertWindowInfo(
+            viewId,
+            visible: rawVisible,
+            maximized: rawMaximized,
+          );
         }
         break;
     }
@@ -579,6 +611,9 @@ class PlatformApi extends _$PlatformApi {
     _genericToplevelViewIds.add(viewId);
     if (protocol is String && protocol.isNotEmpty) {
       _genericToplevelProtocols[viewId] = protocol;
+      if (_toplevelWindows.containsKey(viewId)) {
+        _upsertWindowInfo(viewId, protocol: protocol);
+      }
     }
   }
 
@@ -588,6 +623,10 @@ class PlatformApi extends _$PlatformApi {
   void _mapToplevelView(int viewId) {
     final alreadyMapped = ref.read(mappedWindowListProvider).contains(viewId);
     ref.read(mappedWindowListProvider.notifier).add(viewId);
+    _upsertWindowInfo(
+      viewId,
+      changeType: BackendWindowInventoryChangeType.mapped,
+    );
     if (!alreadyMapped) {
       state.windowMappedSink.add(viewId);
     }
@@ -596,9 +635,96 @@ class PlatformApi extends _$PlatformApi {
   void _unmapToplevelView(int viewId) {
     final wasMapped = ref.read(mappedWindowListProvider).contains(viewId);
     ref.read(mappedWindowListProvider.notifier).remove(viewId);
+    _removeWindowInfo(viewId);
     if (wasMapped) {
       state.windowUnmappedSink.add(viewId);
     }
+  }
+
+  BackendWindowInfo _fallbackWindowInfo(int viewId) {
+    final toplevel = ref.read(xdgToplevelStatesProvider(viewId));
+    return BackendWindowInfo(
+      viewId: viewId,
+      protocol: _genericToplevelProtocols[viewId] ?? "xdg",
+      title: toplevel.title,
+      appId: toplevel.appId,
+      visible: toplevel.visible,
+      maximized: toplevel.maximized,
+    );
+  }
+
+  void _upsertWindowInfo(
+    int viewId, {
+    String? protocol,
+    String? title,
+    String? appId,
+    bool? visible,
+    bool? maximized,
+    BackendWindowInventoryChangeType changeType =
+        BackendWindowInventoryChangeType.updated,
+  }) {
+    final isMapped = ref.read(mappedWindowListProvider).contains(viewId);
+    if (!isMapped && changeType != BackendWindowInventoryChangeType.mapped) {
+      return;
+    }
+
+    final previous = _toplevelWindows[viewId];
+    final fallback = _fallbackWindowInfo(viewId);
+    final next = BackendWindowInfo(
+      viewId: viewId,
+      protocol: protocol ?? previous?.protocol ?? fallback.protocol,
+      title: title ?? previous?.title ?? fallback.title,
+      appId: appId ?? previous?.appId ?? fallback.appId,
+      visible: visible ?? previous?.visible ?? fallback.visible,
+      maximized: maximized ?? previous?.maximized ?? fallback.maximized,
+    );
+    if (previous == next) {
+      return;
+    }
+    _toplevelWindows[viewId] = next;
+    _publishWindowInventory(changeType: changeType, changedViewId: viewId);
+  }
+
+  void _removeWindowInfo(int viewId) {
+    final removed = _toplevelWindows.remove(viewId);
+    if (removed == null) {
+      return;
+    }
+    _publishWindowInventory(
+      changeType: BackendWindowInventoryChangeType.unmapped,
+      changedViewId: viewId,
+    );
+  }
+
+  void _publishWindowInventory({
+    required BackendWindowInventoryChangeType changeType,
+    int? changedViewId,
+  }) {
+    final mappedWindowIds = ref.read(mappedWindowListProvider);
+    final mappedWindowSet = mappedWindowIds.toSet();
+    _toplevelWindows
+        .removeWhere((viewId, _) => !mappedWindowSet.contains(viewId));
+
+    final windows = List<BackendWindowInfo>.unmodifiable(
+      mappedWindowIds.map((viewId) {
+        final existing = _toplevelWindows[viewId];
+        if (existing != null) {
+          return existing;
+        }
+        final created = _fallbackWindowInfo(viewId);
+        _toplevelWindows[viewId] = created;
+        return created;
+      }),
+    );
+
+    state.windowInventorySnapshot = windows;
+    state.windowInventorySink.add(
+      BackendWindowInventoryUpdate(
+        changeType: changeType,
+        changedViewId: changedViewId,
+        windows: windows,
+      ),
+    );
   }
 
   void _ensureToplevelRole(int viewId) {
@@ -644,9 +770,12 @@ class PlatformApi extends _$PlatformApi {
       }
     }
 
+    String? title;
+    String? appId;
     if (event["has_title"] == true) {
       final dynamic rawTitle = event["title"];
       if (rawTitle is String) {
+        title = rawTitle;
         ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(rawTitle);
       }
     }
@@ -654,8 +783,12 @@ class PlatformApi extends _$PlatformApi {
     if (event["has_app_id"] == true) {
       final dynamic rawAppId = event["app_id"];
       if (rawAppId is String) {
+        appId = rawAppId;
         ref.read(xdgToplevelStatesProvider(viewId).notifier).setAppId(rawAppId);
       }
+    }
+    if (title != null || appId != null) {
+      _upsertWindowInfo(viewId, title: title, appId: appId);
     }
   }
 
@@ -682,6 +815,7 @@ class PlatformApi extends _$PlatformApi {
     }
     String title = event["title"];
     ref.read(xdgToplevelStatesProvider(viewId).notifier).setTitle(title);
+    _upsertWindowInfo(viewId, title: title);
   }
 
   void _setAppId(dynamic event) {
@@ -691,6 +825,7 @@ class PlatformApi extends _$PlatformApi {
     }
     String appId = event["app_id"];
     ref.read(xdgToplevelStatesProvider(viewId).notifier).setAppId(appId);
+    _upsertWindowInfo(viewId, appId: appId);
   }
 
   void _setWindowState(dynamic event) {
@@ -703,6 +838,7 @@ class PlatformApi extends _$PlatformApi {
     ref
         .read(xdgToplevelStatesProvider(viewId).notifier)
         .setWindowState(visible: visible, maximized: maximized);
+    _upsertWindowInfo(viewId, visible: visible, maximized: maximized);
   }
 
   void _setMonitors(dynamic event) {
@@ -774,6 +910,12 @@ class PlatformApiState {
   late final Stream<int> windowUnmappedStream;
   late final Sink<int> windowUnmappedSink;
 
+  final _windowInventoryController =
+      StreamController<BackendWindowInventoryUpdate>.broadcast();
+  late final Stream<BackendWindowInventoryUpdate> windowInventoryStream;
+  late final Sink<BackendWindowInventoryUpdate> windowInventorySink;
+  List<BackendWindowInfo> windowInventorySnapshot = const [];
+
   PlatformApiState() {
     textInputEventsStream = _textInputEventsStreamController.stream;
     textInputEventsSink = _textInputEventsStreamController.sink;
@@ -781,7 +923,91 @@ class PlatformApiState {
     windowMappedSink = _windowMappedController.sink;
     windowUnmappedStream = _windowUnmappedController.stream;
     windowUnmappedSink = _windowUnmappedController.sink;
+    windowInventoryStream = _windowInventoryController.stream;
+    windowInventorySink = _windowInventoryController.sink;
   }
+}
+
+enum BackendWindowInventoryChangeType {
+  snapshot,
+  mapped,
+  updated,
+  unmapped,
+}
+
+@immutable
+class BackendWindowInfo {
+  const BackendWindowInfo({
+    required this.viewId,
+    required this.protocol,
+    required this.title,
+    required this.appId,
+    required this.visible,
+    required this.maximized,
+  });
+
+  final int viewId;
+  final String protocol;
+  final String title;
+  final String appId;
+  final bool visible;
+  final bool maximized;
+
+  bool get hasAppId => appId.trim().isNotEmpty;
+
+  /// Intended as the icon lookup key for a DE (desktop-entry/app-id based).
+  String? get iconLookupAppId => hasAppId ? appId : null;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is BackendWindowInfo &&
+        other.viewId == viewId &&
+        other.protocol == protocol &&
+        other.title == title &&
+        other.appId == appId &&
+        other.visible == visible &&
+        other.maximized == maximized;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(viewId, protocol, title, appId, visible, maximized);
+}
+
+@immutable
+class BackendWindowInventoryUpdate {
+  const BackendWindowInventoryUpdate({
+    required this.changeType,
+    required this.changedViewId,
+    required this.windows,
+  });
+
+  final BackendWindowInventoryChangeType changeType;
+  final int? changedViewId;
+  final List<BackendWindowInfo> windows;
+
+  /// Groups mapped windows by `appId`; windows without app id are excluded.
+  Map<String, List<BackendWindowInfo>> get groupedByAppId {
+    return groupBackendWindowsByAppId(windows);
+  }
+}
+
+/// Groups windows by normalized app id for dock/taskbar app grouping.
+Map<String, List<BackendWindowInfo>> groupBackendWindowsByAppId(
+  Iterable<BackendWindowInfo> windows,
+) {
+  final grouped = <String, List<BackendWindowInfo>>{};
+  for (final window in windows) {
+    final normalized = window.appId.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      continue;
+    }
+    grouped.putIfAbsent(normalized, () => <BackendWindowInfo>[]).add(window);
+  }
+  return grouped;
 }
 
 class BackendMonitor {

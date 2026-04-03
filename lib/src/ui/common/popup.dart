@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:jdwm/ui/common/popup_stack.dart';
+import 'package:jdwm/src/ui/common/popup_stack.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_popup_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';

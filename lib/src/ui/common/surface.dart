@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/subsurface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
-import 'package:jdwm/ui/common/subsurface.dart';
-import 'package:jdwm/ui/common/surface_size.dart';
-import 'package:jdwm/ui/common/view_input_listener.dart';
+import 'package:jdwm/src/ui/common/subsurface.dart';
+import 'package:jdwm/src/ui/common/surface_size.dart';
+import 'package:jdwm/src/ui/common/view_input_listener.dart';
 
 class Surface extends ConsumerWidget {
   final int viewId;
