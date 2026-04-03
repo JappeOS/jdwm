@@ -512,8 +512,7 @@ class _WindowState extends State<Window> {
             setState(() {});
           },
           child: _buildContainer(
-            isDecorated: isDecorated,
-            hasBorder: isDecorated && !docked,
+            hasBorder: !docked,
             isFocused: hierarchy.entriesByFocus.isNotEmpty &&
                 hierarchy.entriesByFocus.last == entry,
             child: Column(
@@ -648,19 +647,10 @@ class _WindowState extends State<Window> {
   }
 
   Widget _buildContainer({
-    required bool isDecorated,
     bool hasBorder = false,
     bool isFocused = false,
     required Widget child,
   }) {
-    // CSD windows should not be wrapped/clipped by server chrome widgets.
-    if (!isDecorated) {
-      return KeyedSubtree(
-        key: _mainContainerKey,
-        child: child,
-      );
-    }
-
     // SSD windows always use the same container type, avoiding gesture breaks
     // when toggling docked/maximized states.
     return DualBorderOutlinedContainer(
