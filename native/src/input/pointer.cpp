@@ -65,6 +65,21 @@ void ZenithPointer::set_visible(bool value) {
 	schedule_cursor_frame(server);
 }
 
+void ZenithPointer::set_forced_hidden(bool value) {
+	if (forced_hidden == value) {
+		return;
+	}
+	forced_hidden = value;
+	set_visible(!forced_hidden);
+}
+
+void ZenithPointer::reveal_from_input_activity() {
+	if (forced_hidden) {
+		return;
+	}
+	set_visible(true);
+}
+
 void ZenithPointer::set_manual_locked(bool value) {
 	if (manual_lock == value) {
 		return;
@@ -149,7 +164,7 @@ void server_cursor_motion(wl_listener* listener, void* data) {
 	}
 
 	server_update_pointer_constraint(server);
-	pointer->set_visible(true);
+	pointer->reveal_from_input_activity();
 
 	if (server->relative_pointer_manager != nullptr) {
 		wlr_relative_pointer_manager_v1_send_relative_motion(
@@ -197,7 +212,7 @@ void server_cursor_motion_absolute(wl_listener* listener, void* data) {
 	}
 
 	server_update_pointer_constraint(server);
-	pointer->set_visible(true);
+	pointer->reveal_from_input_activity();
 
 	if (!pointer->is_locked()) {
 		wlr_cursor_warp_absolute(pointer->cursor, &event->pointer->base, event->x, event->y);
@@ -230,7 +245,7 @@ void server_cursor_button(wl_listener* listener, void* data) {
 	}
 
 	server_update_pointer_constraint(server);
-	pointer->set_visible(true);
+	pointer->reveal_from_input_activity();
 
 	FlutterPointerEvent e = {};
 	e.struct_size = sizeof(FlutterPointerEvent);
@@ -265,7 +280,7 @@ void server_cursor_axis(wl_listener* listener, void* data) {
 	}
 
 	server_update_pointer_constraint(server);
-	pointer->set_visible(true);
+	pointer->reveal_from_input_activity();
 	schedule_cursor_frame(server);
 
 	/* Notify the client with pointer focus of the axis event. */

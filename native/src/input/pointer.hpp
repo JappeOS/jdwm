@@ -29,6 +29,7 @@ struct ZenithPointer {
 
 private:
 	bool visible = true;
+	bool forced_hidden = false;
 	bool manual_lock = false;
 	bool client_lock = false;
 
@@ -42,6 +43,8 @@ private:
 		}
 
 		void set_visible(bool value);
+		void set_forced_hidden(bool value);
+		void reveal_from_input_activity();
 		void set_manual_locked(bool value);
 		void set_client_locked(bool value);
 		void restore_default_cursor();

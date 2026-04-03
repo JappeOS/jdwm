@@ -86,6 +86,7 @@ class WindowManagerState extends State<WindowManager> {
   ProviderSubscription? _windowUnmappedSubscription;
   ProviderSubscription? _monitorListSubscription;
   List<MonitorConfig> _backendMonitorConfigs = const [];
+  bool? _cursorVisible;
 
   void addWindowStateListener(VoidCallback listener) {
     _windowStateListeners.add(listener);
@@ -483,8 +484,8 @@ class WindowManagerState extends State<WindowManager> {
   void setClientCursor(SystemMouseCursor cursor, Offset globalPosition) {
     setState(() {
       _clientCursor = Positioned(
-        left: globalPosition.dx,
-        top: globalPosition.dy,
+        left: globalPosition.dx.round().toDouble(),
+        top: globalPosition.dy.round().toDouble(),
         child: FractionalTranslation(
           translation: const Offset(-0.5, -0.5),
           child: ClientCursor.get(cursor),
@@ -505,6 +506,10 @@ class WindowManagerState extends State<WindowManager> {
     if (_backendContainer == null) {
       return;
     }
+    if (_cursorVisible == visible) {
+      return;
+    }
+    _cursorVisible = visible;
     await _backendContainer!
         .read(platformApiProvider.notifier)
         .setCursorVisible(visible);

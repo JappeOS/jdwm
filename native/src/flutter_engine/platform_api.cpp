@@ -627,7 +627,7 @@ void set_cursor_visible(ZenithServer* server, const flutter::MethodCall<>& call,
 	auto value = std::get<bool>(call.arguments()[0]);
 	server->callable_queue.enqueue([server, value] {
 		if (server->pointer != nullptr) {
-			server->pointer->set_visible(value);
+			server->pointer->set_forced_hidden(!value);
 		}
 	});
 	result->Success();
