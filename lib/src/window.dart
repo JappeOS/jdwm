@@ -71,6 +71,7 @@ class _WindowState extends State<Window> {
   bool _backendInteractiveMoveActive = false;
   ResizeEdge? _backendInteractiveResizeActiveEdge;
   bool _backendInteractionListenersAttached = false;
+  int _currentPointerButtons = 0;
   double _measuredToolbarHeight = 0;
   bool _backendResizeRequestInFlight = false;
   _BackendResizeRequest? _pendingBackendResizeRequest;
@@ -174,6 +175,10 @@ class _WindowState extends State<Window> {
       xdgToplevelStatesProvider(viewId)
           .select((v) => v.interactiveMoveRequested),
       (_, __) {
+        if (_currentPointerButtons == 0) {
+          _backendInteractiveMoveActive = false;
+          return;
+        }
         _backendInteractiveMoveActive = true;
         _backendInteractiveResizeActiveEdge = null;
         widget.entry.backendInteractiveResizeEdge = null;
@@ -183,6 +188,11 @@ class _WindowState extends State<Window> {
       xdgToplevelStatesProvider(viewId)
           .select((v) => v.interactiveResizeRequested),
       (_, next) {
+        if (_currentPointerButtons == 0) {
+          _backendInteractiveResizeActiveEdge = null;
+          widget.entry.backendInteractiveResizeEdge = null;
+          return;
+        }
         _backendInteractiveResizeActiveEdge = next.edge;
         widget.entry.backendInteractiveResizeEdge = next.edge;
         _backendResizeStartSize = widget.entry.windowRect.size;
@@ -197,15 +207,43 @@ class _WindowState extends State<Window> {
     if (_backendViewId == null) {
       return;
     }
+    _currentPointerButtons = event.buttons;
+    if (event is PointerDownEvent) {
+      final manager = WindowManager.of(context);
+      final windowRect =
+          manager?.targetRectForWindow(widget.entry) ?? widget.entry.windowRect;
+      if (!windowRect.contains(event.position)) {
+        _backendInteractiveMoveActive = false;
+        _backendInteractiveResizeActiveEdge = null;
+        widget.entry.backendInteractiveResizeEdge = null;
+        _backendResizeStartSize = null;
+        _backendResizeAccumDelta = Offset.zero;
+        _cancelBackendResizeDispatchTimer();
+        _pendingBackendResizeRequest = null;
+        _rawLeft = _rawTop = _rawRight = _rawBottom = null;
+        _dragRawLeft = _dragRawTop = null;
+        manager?.endClientCursor();
+      }
+    }
     if (event is PointerMoveEvent) {
       _lastDragGlobalPosition = event.position;
       if (_backendInteractiveMoveActive) {
+        if (event.buttons == 0) {
+          _backendInteractiveMoveActive = false;
+          WindowManager.of(context)?.endClientCursor();
+          return;
+        }
         _applyWindowDrag(event.delta, event.position);
         return;
       }
       final edge = _backendInteractiveResizeActiveEdge;
       if (edge != null) {
         if (event.buttons == 0) {
+          _backendInteractiveResizeActiveEdge = null;
+          widget.entry.backendInteractiveResizeEdge = null;
+          _cancelBackendResizeDispatchTimer();
+          _pendingBackendResizeRequest = null;
+          WindowManager.of(context)?.endClientCursor();
           return;
         }
         final manager = WindowManager.of(context);
@@ -239,6 +277,7 @@ class _WindowState extends State<Window> {
     }
 
     if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _currentPointerButtons = 0;
       final wasMoveActive = _backendInteractiveMoveActive;
       final manager = WindowManager.of(context);
       if (wasMoveActive && _lastDragGlobalPosition != null) {
@@ -816,8 +855,10 @@ class _WindowState extends State<Window> {
       manager.syncBackendWindowGeometry(entry, force: true);
       return;
     }
-    if ((localPosition.dy <= _dockThickness && localPosition.dx >= localUsableWidth - 50) ||
-        (localPosition.dy <= 50 && localPosition.dx >= localUsableWidth - _dockThickness)) {
+    if ((localPosition.dy <= _dockThickness &&
+            localPosition.dx >= localUsableWidth - 50) ||
+        (localPosition.dy <= 50 &&
+            localPosition.dx >= localUsableWidth - _dockThickness)) {
       _captureDockRestore(entry);
       entry.windowDock = WindowDock.topRight;
       manager.syncBackendWindowGeometry(entry, force: true);
