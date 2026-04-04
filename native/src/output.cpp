@@ -6,6 +6,8 @@
 #include "util/wlr/scoped_wlr_buffer.hpp"
 #include "debug.hpp"
 #include "output/zenith_output_manager.hpp"
+#include "output/rendering_policy.hpp"
+#include "output/presentation_timing.hpp"
 #include <unistd.h>
 #include <cstdlib>
 
@@ -17,6 +19,7 @@ extern "C" {
 #include <wlr/util/log.h>
 #include <wlr/backend/drm.h>
 #include <wlr/render/allocator.h>
+#include <wlr/render/drm_format_set.h>
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
 #define class wlroots_xwayland_class
@@ -50,37 +53,6 @@ ZenithOutput::ZenithOutput(struct wlr_output* wlr_output)
 
 static std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_swap_chain(
 	wlr_output* wlr_output, int width_override = 0, int height_override = 0);
-
-static size_t parse_swapchain_buffer_count_override() {
-	const char* value = std::getenv("ZENITH_SWAPCHAIN_BUFFERS");
-	if (value == nullptr || value[0] == '\0') {
-		return 0;
-	}
-	char* end = nullptr;
-	unsigned long parsed = std::strtoul(value, &end, 10);
-	if (end == value || (end != nullptr && *end != '\0')) {
-		return 0;
-	}
-	if (parsed < 4) {
-		return 4;
-	}
-	return static_cast<size_t>(parsed);
-}
-
-static size_t desired_swapchain_buffer_count(ZenithServer* server) {
-	const size_t override_value = parse_swapchain_buffer_count_override();
-	if (override_value != 0) {
-		return override_value;
-	}
-	if (server != nullptr && server->output_manager != nullptr &&
-	    server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
-		// Extended desktop can be presented by multiple outputs with different
-		// refresh rates. Keep a deeper history to avoid reusing a buffer that is
-		// still being scanned out on another output/GPU.
-		return 8;
-	}
-	return 4;
-}
 
 static bool software_cursor_active(wlr_output* wlr_output) {
 	struct wlr_output_cursor* cur;
@@ -148,9 +120,32 @@ static void set_scene_buffer_with_damage(
 	wlr_scene_buffer_set_buffer(output->scene_buffer, buffer);
 }
 
-static bool should_force_software_cursor() {
-	const char* value = getenv("ZENITH_FORCE_SOFTWARE_CURSOR");
-	return value != nullptr && value[0] != '\0' && value[0] != '0';
+static void release_presented_slot(ZenithOutput* output) {
+	if (output == nullptr || output->presented_slot == nullptr) {
+		return;
+	}
+	output->presented_slot->release_presentation();
+	output->presented_slot = nullptr;
+}
+
+static void swap_presented_slot(
+	ZenithOutput* output, const std::shared_ptr<Slot<wlr_gles2_buffer>>& new_slot) {
+	if (output == nullptr || output->presented_slot == new_slot) {
+		return;
+	}
+	if (new_slot != nullptr) {
+		new_slot->acquire_presentation();
+	}
+	release_presented_slot(output);
+	output->presented_slot = new_slot;
+}
+
+static void free_drm_format(struct wlr_drm_format* format) {
+	if (format == nullptr) {
+		return;
+	}
+	free(format->modifiers);
+	free(format);
 }
 
 void output_create_handle(wl_listener* listener, void* data) {
@@ -174,17 +169,23 @@ void output_create_handle(wl_listener* listener, void* data) {
 }
 
 void output_frame(wl_listener* listener, void* data) {
+	(void)data;
 	ZenithOutput* output = wl_container_of(listener, output, frame_listener);
 	auto* server = ZenithServer::instance();
 
 	log_cursor_mode_transition(output);
 
 	ZenithOutput* source_output = server->output_manager->presentation_source_output(output);
-	if (source_output == nullptr || source_output->swap_chain == nullptr) {
+	if (source_output == nullptr ||
+	    source_output->swap_chain == nullptr ||
+	    output->scene_output == nullptr ||
+	    output->scene_buffer == nullptr) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
-	if (output == source_output) {
+
+	ZenithOutput* vsync_output = server->output_manager->vsync_driver_output();
+	if (output == vsync_output) {
 		timespec frame_done_now{};
 		clock_gettime(CLOCK_MONOTONIC, &frame_done_now);
 		for (auto& [id, view]: server->xdg_toplevels) {
@@ -224,14 +225,15 @@ void output_frame(wl_listener* listener, void* data) {
 			);
 		}
 
-		vsync_callback(server);
+		vsync_callback(server, output->wlr_output);
 	}
 
-	wlr_gles2_buffer* source_buffer = source_output->swap_chain->start_read();
-	if (source_buffer == nullptr || output->scene_output == nullptr || output->scene_buffer == nullptr) {
+	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_output->swap_chain->start_read_slot();
+	if (source_slot == nullptr || source_slot->buffer == nullptr) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
+	wlr_gles2_buffer* source_buffer = source_slot->buffer.get();
 
 	wlr_buffer* source_wlr_buffer = source_buffer->buffer;
 	if (server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
@@ -239,10 +241,8 @@ void output_frame(wl_listener* listener, void* data) {
 		// one shared framebuffer. Reusing partial damage here can miss updates on
 		// the second monitor due to coordinate-space mismatch, causing trails.
 		wlr_scene_buffer_set_buffer(output->scene_buffer, source_wlr_buffer);
-		output->last_scene_buffer = source_wlr_buffer;
 	} else {
 		set_scene_buffer_with_damage(output, source_wlr_buffer, source_output->swap_chain.get());
-		output->last_scene_buffer = source_wlr_buffer;
 	}
 
 	if (server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
@@ -271,6 +271,8 @@ void output_frame(wl_listener* listener, void* data) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
+	output->last_scene_buffer = source_wlr_buffer;
+	swap_presented_slot(output, source_slot);
 
 	// Notify scene-managed surfaces that this output frame has been presented.
 	timespec now{};
@@ -283,18 +285,39 @@ void output_request_state(wl_listener* listener, void* data) {
 	auto* event = static_cast<wlr_output_event_request_state*>(data);
 	auto* server = ZenithServer::instance();
 
-	wlr_output_commit_state(output->wlr_output, event->state);
+	if (!wlr_output_commit_state(output->wlr_output, event->state)) {
+		wlr_log(WLR_ERROR, "zenith: failed to apply requested state for output '%s'", output->wlr_output->name);
+		return;
+	}
 
-	output->recreate_swapchain();
+	if (output->wlr_output->enabled) {
+		output->recreate_swapchain();
+		if (output->swap_chain == nullptr) {
+			wlr_log(WLR_ERROR, "zenith: output '%s' has no swapchain after state change", output->wlr_output->name);
+		}
+	} else {
+		release_presented_slot(output);
+	}
 
 	server->output_manager->handle_output_state_changed(output);
 }
 
 int vsync_callback(void* data) {
 	auto* server = static_cast<ZenithServer*>(data);
-	auto& output = server->output;
+	if (server == nullptr || server->output_manager == nullptr) {
+		return 0;
+	}
+	ZenithOutput* timing = server->output_manager->vsync_driver_output();
+	return vsync_callback(data, timing != nullptr ? timing->wlr_output : nullptr);
+}
+
+int vsync_callback(void* data, struct wlr_output* timing_output) {
+	auto* server = static_cast<ZenithServer*>(data);
+	if (server == nullptr) {
+		return 0;
+	}
 	auto& embedder_state = server->embedder_state;
-	if (output == nullptr || output->wlr_output == nullptr) {
+	if (embedder_state == nullptr) {
 		return 0;
 	}
 
@@ -303,12 +326,8 @@ int vsync_callback(void* data) {
 	 */
 	std::optional<intptr_t> baton = embedder_state->get_baton();
 	if (baton.has_value()) {
-		double refresh_rate = output->wlr_output->refresh != 0
-		                      ? (double) output->wlr_output->refresh / 1000
-		                      : 60; // Suppose it's 60Hz if the refresh rate is not available.
-
 		uint64_t now = FlutterEngineGetCurrentTime();
-		uint64_t next_frame = now + (uint64_t) (1'000'000'000ull / refresh_rate);
+		uint64_t next_frame = zenith::render::next_presentation_time_ns(now, timing_output);
 		embedder_state->on_vsync(*baton, now, next_frame);
 	}
 	return 0;
@@ -320,24 +339,44 @@ std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_swap_chain(
 
 	wlr_egl_make_current(wlr_gles2_renderer_get_egl(server->renderer), NULL);
 
-	const size_t buffer_count = desired_swapchain_buffer_count(server);
+	const size_t buffer_count = zenith::render::desired_swapchain_buffer_count(server);
 	std::vector<std::shared_ptr<wlr_gles2_buffer>> buffers;
 	buffers.reserve(buffer_count);
 	const int width = width_override > 0 ? width_override : wlr_output->width;
 	const int height = height_override > 0 ? height_override : wlr_output->height;
 
 	wlr_drm_format* drm_format = get_output_format(wlr_output);
+	if (drm_format == nullptr) {
+		wlr_log(WLR_ERROR, "zenith: failed to pick output format for '%s'", wlr_output->name);
+		return nullptr;
+	}
 	for (size_t i = 0; i < buffer_count; i++) {
 		wlr_buffer* buf = wlr_allocator_create_buffer(server->allocator, width, height,
 		                                              drm_format);
+		if (buf == nullptr) {
+			wlr_log(WLR_ERROR, "zenith: failed to allocate swapchain buffer %zu for output '%s'", i, wlr_output->name);
+			break;
+		}
 		assert(wlr_renderer_is_gles2(server->renderer));
 		auto* gles2_renderer = (struct wlr_gles2_renderer*) server->renderer;
 		wlr_gles2_buffer* gles2_buffer = create_buffer(gles2_renderer, buf);
+		if (gles2_buffer == nullptr) {
+			wlr_log(WLR_ERROR, "zenith: failed to create GLES2 wrapper for swapchain buffer %zu on '%s'", i, wlr_output->name);
+			wlr_buffer_drop(buf);
+			break;
+		}
 		buffers.emplace_back(scoped_wlr_gles2_buffer(gles2_buffer));
+	}
+	free_drm_format(drm_format);
+	if (buffers.size() < 4) {
+		wlr_log(WLR_ERROR,
+		        "zenith: swapchain creation for output '%s' produced only %zu buffers (need >=4)",
+		        wlr_output->name, buffers.size());
+		return nullptr;
 	}
 
 	wlr_log(WLR_INFO, "zenith: swapchain output='%s' size=%dx%d buffers=%zu",
-	        wlr_output->name, width, height, buffer_count);
+	        wlr_output->name, width, height, buffers.size());
 	return std::make_unique<SwapChain<wlr_gles2_buffer>>(buffers);
 }
 
@@ -360,6 +399,10 @@ void output_destroy(wl_listener* listener, void* data) {
 		wlr_output_lock_software_cursors(output->wlr_output, false);
 		output->software_cursor_locked = false;
 	}
+	if (output->attach_render_locked) {
+		wlr_output_lock_attach_render(output->wlr_output, false);
+		output->attach_render_locked = false;
+	}
 
 	if (output->scene_buffer != nullptr) {
 		wlr_scene_node_destroy(&output->scene_buffer->node);
@@ -370,6 +413,7 @@ void output_destroy(wl_listener* listener, void* data) {
 		output->scene_output = nullptr;
 	}
 	output->last_scene_buffer = nullptr;
+	release_presented_slot(output);
 
 	server->output_manager->handle_output_removed(output);
 }
@@ -390,15 +434,34 @@ bool ZenithOutput::enable() {
 	}
 	wlr_output_state_finish(&state);
 
+	auto* server = ZenithServer::instance();
+	if (server != nullptr &&
+	    server->output_manager != nullptr &&
+	    server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend &&
+	    !zenith::render::allow_direct_scanout() &&
+	    !attach_render_locked) {
+		wlr_output_lock_attach_render(wlr_output, true);
+		attach_render_locked = true;
+		wlr_log(
+			WLR_INFO,
+			"zenith: disabled direct scan-out on output '%s' in extend mode",
+			wlr_output->name
+		);
+	}
+
 	// Optional: force software cursor composition on DRM/tty for debugging
 	// problematic hardware cursor planes.
-	if (wlr_output_is_drm(wlr_output) && should_force_software_cursor() && !software_cursor_locked) {
+	if (wlr_output_is_drm(wlr_output) && zenith::render::force_software_cursor() && !software_cursor_locked) {
 		wlr_output_lock_software_cursors(wlr_output, true);
 		software_cursor_locked = true;
 		wlr_log(WLR_INFO, "zenith: forced software cursor lock on output '%s'", wlr_output->name);
 	}
 
 	recreate_swapchain();
+	if (swap_chain == nullptr) {
+		wlr_log(WLR_ERROR, "zenith: failed to enable output '%s' due to swapchain init failure", wlr_output->name);
+		return false;
+	}
 	return true;
 }
 
@@ -412,10 +475,15 @@ bool ZenithOutput::disable() {
 		return false;
 	}
 	wlr_output_state_finish(&state);
+	if (attach_render_locked) {
+		wlr_output_lock_attach_render(wlr_output, false);
+		attach_render_locked = false;
+	}
 	if (software_cursor_locked) {
 		wlr_output_lock_software_cursors(wlr_output, false);
 		software_cursor_locked = false;
 	}
+	release_presented_slot(this);
 	return true;
 }
 
@@ -424,7 +492,13 @@ void ZenithOutput::recreate_swapchain() {
 }
 
 void ZenithOutput::recreate_swapchain(int width, int height) {
-	swap_chain = create_swap_chain(wlr_output, width, height);
+	auto new_swap_chain = create_swap_chain(wlr_output, width, height);
+	if (new_swap_chain == nullptr) {
+		wlr_log(WLR_ERROR, "zenith: failed to recreate swapchain for output '%s'", wlr_output->name);
+		return;
+	}
+	swap_chain = std::move(new_swap_chain);
+	release_presented_slot(this);
 	swapchain_width = width;
 	swapchain_height = height;
 	last_scene_buffer = nullptr;

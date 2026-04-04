@@ -1,6 +1,7 @@
 #include <sys/ioctl.h>
 #include <xf86drm.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include "zenith_surface.hpp"
 #include "server.hpp"
 #include "output/zenith_output_manager.hpp"
@@ -16,6 +17,7 @@ extern "C" {
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/render/gles2.h>
+#include <wlr/util/log.h>
 #define class wlroots_xwayland_class
 #include <wlr/xwayland/xwayland.h>
 #undef class
@@ -46,6 +48,8 @@ void zenith_surface_create(wl_listener* listener, void* data) {
 }
 
 int extract_sync_fd_from_dma_buf(wlr_buffer* buffer, const wlr_dmabuf_attributes& dmabuf_attributes);
+
+int dup_dmabuf_wait_fd(const wlr_dmabuf_attributes& dmabuf_attributes);
 
 int extract_fd_from_native_fence(EGLSyncKHR* sync_out);
 
@@ -194,7 +198,36 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 				});
 				wait_for_fd = sync_fd;
 			} else {
-				scoped_buffer = scoped_wlr_buffer(buffer);
+				int dmabuf_wait_fd = dup_dmabuf_wait_fd(dmabuf_attributes);
+				if (dmabuf_wait_fd != -1) {
+					static bool logged_dmabuf_poll_fallback = false;
+					if (!logged_dmabuf_poll_fallback) {
+						wlr_log(
+							WLR_INFO,
+							"zenith: using dma-buf poll fallback because "
+							"DMA_BUF_IOCTL_EXPORT_SYNC_FILE is unavailable"
+						);
+						logged_dmabuf_poll_fallback = true;
+					}
+					// Fallback for drivers where DMA_BUF_IOCTL_EXPORT_SYNC_FILE
+					// is unavailable. Polling the dma-buf FD waits for implicit
+					// writer fences (POLLIN semantics).
+					scoped_buffer = scoped_wlr_buffer(buffer, [dmabuf_wait_fd](wlr_buffer* buffer) {
+						close(dmabuf_wait_fd);
+					});
+					wait_for_fd = dmabuf_wait_fd;
+				} else {
+					static bool logged_unsynced_dmabuf = false;
+					if (!logged_unsynced_dmabuf) {
+						wlr_log(
+							WLR_ERROR,
+							"zenith: no sync wait path available for dma-buf commit; "
+							"client-content tearing may occur"
+						);
+						logged_unsynced_dmabuf = true;
+					}
+					scoped_buffer = scoped_wlr_buffer(buffer);
+				}
 			}
 		} else {
 			EGLSyncKHR sync = nullptr;
@@ -256,6 +289,30 @@ int extract_sync_fd_from_dma_buf(wlr_buffer* buffer, const wlr_dmabuf_attributes
 	}
 	int sync_fd = sync_file.fd;
 	return sync_fd;
+}
+
+int dup_dmabuf_wait_fd(const wlr_dmabuf_attributes& dmabuf_attributes) {
+	if (dmabuf_attributes.n_planes <= 0) {
+		return -1;
+	}
+
+	int dma_fd = dmabuf_attributes.fd[0];
+	if (dma_fd < 0) {
+		return -1;
+	}
+
+	// We only wait on a single FD when all planes share it.
+	for (int i = 1; i < dmabuf_attributes.n_planes; i++) {
+		if (dmabuf_attributes.fd[i] >= 0 && dmabuf_attributes.fd[i] != dma_fd) {
+			return -1;
+		}
+	}
+
+	int duplicated = fcntl(dma_fd, F_DUPFD_CLOEXEC, 0);
+	if (duplicated != -1) {
+		return duplicated;
+	}
+	return dup(dma_fd);
 }
 
 // https://registry.khronos.org/EGL/extensions/ANDROID/EGL_ANDROID_native_fence_sync.txt
@@ -343,5 +400,6 @@ void schedule_buffer_commit_on_fd(int fd, std::unique_ptr<SurfaceCommitMessage> 
 	};
 
 	wl_event_loop* event_loop = wl_display_get_event_loop(ZenithServer::instance()->display);
-	source_data->source = wl_event_loop_add_fd(event_loop, fd, WL_EVENT_READABLE, func, source_data);
+	source_data->source = wl_event_loop_add_fd(
+		event_loop, fd, WL_EVENT_READABLE | WL_EVENT_HANGUP | WL_EVENT_ERROR, func, source_data);
 }

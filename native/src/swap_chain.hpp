@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -16,6 +17,11 @@ struct Slot {
 
 	std::shared_ptr<T> buffer;
 	std::vector<FlutterRect> damage_regions = {};
+	std::atomic<uint32_t> presentation_refs{0};
+
+	void acquire_presentation();
+	void release_presentation();
+	[[nodiscard]] bool is_presented() const;
 };
 
 template<class T>
@@ -24,14 +30,9 @@ struct SwapChain {
 
 	std::mutex mutex = {};
 
-	// Oldest-to-newest read slots. Slot 0 is the buffer returned by start_read().
-	// Keeping multiple historical read buffers delays buffer reuse, which is
-	// important when multiple outputs scan out asynchronously.
-	std::vector<std::shared_ptr<Slot<T>>> read_buffers = {};
+	std::vector<std::shared_ptr<Slot<T>>> slots = {};
 	std::shared_ptr<Slot<T>> write_buffer = {};
 	std::shared_ptr<Slot<T>> latest_buffer = {};
-
-	bool new_buffer_available = false;
 
 	[[nodiscard]] T* start_write();
 
@@ -40,8 +41,12 @@ struct SwapChain {
 	void end_write(array_view<FlutterRect> damage);
 
 	[[nodiscard]] T* start_read();
+	[[nodiscard]] std::shared_ptr<Slot<T>> start_read_slot();
 
 	virtual ~SwapChain();
+
+private:
+	[[nodiscard]] std::shared_ptr<Slot<T>> choose_write_buffer_locked() const;
 };
 
 #include "swap_chain.tpp"

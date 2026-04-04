@@ -433,20 +433,6 @@ class _WindowState extends State<Window> {
     );
   }
 
-  void _requestBackendInteractiveMove(BuildContext context) {
-    final viewId = _backendViewId;
-    if (viewId == null) {
-      return;
-    }
-    final container = _backendContainer(context);
-    if (container == null) {
-      return;
-    }
-    container
-        .read(xdgToplevelStatesProvider(viewId).notifier)
-        .requestInteractiveMove();
-  }
-
   void _requestBackendInteractiveResize(BuildContext context, ResizeEdge edge) {
     final viewId = _backendViewId;
     if (viewId == null) {
@@ -721,14 +707,17 @@ class _WindowState extends State<Window> {
       provider_pkg.Provider.of<WindowHierarchyState>(context, listen: false)
           .requestWindowFocus(widget.entry);
     }
-    _requestBackendInteractiveMove(context);
+    if (_backendViewId != null) {
+      // Headerbar drags should move backend windows immediately, independent
+      // of backend-initiated interactive-move request signals.
+      _backendInteractiveMoveActive = false;
+      _backendInteractiveResizeActiveEdge = null;
+      widget.entry.backendInteractiveResizeEdge = null;
+    }
   }
 
   void _onTitlebarDrag(DragUpdateDetails details) {
     _lastDragGlobalPosition = details.globalPosition;
-    if (_backendViewId != null) {
-      return;
-    }
     _applyWindowDrag(details.delta, details.globalPosition);
   }
 
@@ -811,9 +800,6 @@ class _WindowState extends State<Window> {
 
   void _onTitlebarDragEnd(DragEndDetails details) {
     _dragRawLeft = _dragRawTop = null;
-    if (_backendViewId != null) {
-      return;
-    }
     final pos = _lastDragGlobalPosition;
     if (pos == null) {
       return;
@@ -834,6 +820,9 @@ class _WindowState extends State<Window> {
         0,
         monitor.usableBounds.top - entry.windowRect.top,
       );
+      if (entry.backendViewId != null) {
+        manager.syncBackendWindowGeometry(entry, force: true);
+      }
     }
 
     final regionKey = manager.getRegionKey(monitor.id);

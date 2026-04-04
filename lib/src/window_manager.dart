@@ -88,6 +88,29 @@ class WindowManagerState extends State<WindowManager> {
   List<MonitorConfig> _backendMonitorConfigs = const [];
   bool? _cursorVisible;
 
+  String _resolvedBackendWindowTitle({
+    required int viewId,
+    String fallback = '',
+  }) {
+    final state = _backendContainer!.read(xdgToplevelStatesProvider(viewId));
+    final title = state.title.trim();
+    if (title.isNotEmpty) {
+      return state.title;
+    }
+    final appId = state.appId.trim();
+    if (appId.isNotEmpty) {
+      return state.appId;
+    }
+    return fallback;
+  }
+
+  double _backendClientInsetTopFor(WindowEntry entry) {
+    if (entry.chromeMode != WindowChromeMode.decorated) {
+      return 0;
+    }
+    return entry.backendContentInsetTop;
+  }
+
   void addWindowStateListener(VoidCallback listener) {
     _windowStateListeners.add(listener);
   }
@@ -249,6 +272,10 @@ class WindowManagerState extends State<WindowManager> {
     entry.chromeMode = initialDecoration == ToplevelDecoration.serverSide
         ? WindowChromeMode.decorated
         : WindowChromeMode.borderless;
+    entry.title = _resolvedBackendWindowTitle(
+      viewId: viewId,
+      fallback: entry.title,
+    );
     _updateBackendWindowSizeFromState(viewId, entry);
 
     _backendWindows[viewId] = entry;
@@ -301,11 +328,33 @@ class WindowManagerState extends State<WindowManager> {
       _backendContainer!.listen(
         xdgToplevelStatesProvider(viewId).select((v) => v.title),
         (_, next) {
-          if (next.isNotEmpty && entry.title != next) {
-            entry.title = next;
+          final resolved = _resolvedBackendWindowTitle(
+            viewId: viewId,
+            fallback: entry.title,
+          );
+          if (entry.title != resolved) {
+            entry.title = resolved;
             _notifyWindowStateListeners();
           }
         },
+        fireImmediately: true,
+      ),
+    );
+
+    subs.add(
+      _backendContainer!.listen(
+        xdgToplevelStatesProvider(viewId).select((v) => v.appId),
+        (_, __) {
+          final resolved = _resolvedBackendWindowTitle(
+            viewId: viewId,
+            fallback: entry.title,
+          );
+          if (entry.title != resolved) {
+            entry.title = resolved;
+            _notifyWindowStateListeners();
+          }
+        },
+        fireImmediately: true,
       ),
     );
 
@@ -407,7 +456,10 @@ class WindowManagerState extends State<WindowManager> {
               return;
             }
           }
-          entry.windowRect = _clampRectToMonitorUsableBounds(entry, nextRect);
+          // Keep initial spawn placement constrained to monitor bounds, but
+          // do not continuously clamp subsequent backend geometry updates.
+          // Continuous clamping breaks cross-monitor interactive resize/move.
+          entry.windowRect = nextRect;
           _notifyWindowStateListeners();
         },
         fireImmediately: true,
@@ -716,9 +768,14 @@ class WindowManagerState extends State<WindowManager> {
       return;
     }
     final usable = monitor.usableBounds.size;
+    final clientInsetTop = _backendClientInsetTopFor(entry);
+    final clientHeight = math.max(
+      entry.minSize.height,
+      usable.height - clientInsetTop,
+    );
     container.read(platformApiProvider.notifier).maximizedWindowSize(
           usable.width.round(),
-          usable.height.round(),
+          clientHeight.round(),
         );
   }
 
@@ -729,14 +786,22 @@ class WindowManagerState extends State<WindowManager> {
       return;
     }
     final target = targetRectForWindow(entry);
-    final clientInsetTop = entry.chromeMode == WindowChromeMode.decorated
-        ? entry.backendContentInsetTop
-        : 0.0;
+    final clientInsetTop = _backendClientInsetTopFor(entry);
+    var clientHeight = target.height;
+    // In maximized/docked states, target rect represents outer frame bounds.
+    // Convert to backend client content geometry by subtracting SSD headerbar.
+    if (clientInsetTop > 0 &&
+        (entry.maximized || entry.windowDock != WindowDock.normal)) {
+      clientHeight = math.max(
+        entry.minSize.height,
+        target.height - clientInsetTop,
+      );
+    }
     final desiredGeometry = Rect.fromLTWH(
       target.left.roundToDouble(),
       (target.top + clientInsetTop).roundToDouble(),
       target.width.roundToDouble(),
-      target.height.roundToDouble(),
+      clientHeight.roundToDouble(),
     );
     final lastSent = _lastRequestedBackendGeometries[backendViewId];
     if (!force && lastSent != null && lastSent == desiredGeometry) {

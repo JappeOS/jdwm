@@ -8,6 +8,18 @@ export XDG_SESSION_TYPE=tty
 export ZENITH_MULTI_MONITOR_MODE=extend
 ```
 
+Recommended for hybrid iGPU+dGPU laptops (internal panel on iGPU, external HDMI/DP on dGPU):
+
+```bash
+# Drive Flutter frame pacing from the monitor you're actively using.
+# Options: active (default), render, highest_refresh
+export ZENITH_VSYNC_OUTPUT=active
+
+# Optional: increase if you still see buffer-reuse pressure in logs.
+# Default in extend mode is already 8.
+# export ZENITH_SWAPCHAIN_BUFFERS=10
+```
+
 Run as the *same user you logged into the TTY with* (avoid `sudo`/`su`), so PAM/systemd-logind set up the session
 environment (notably `XDG_SESSION_ID`, `XDG_VTNR`, `XDG_RUNTIME_DIR`).
 
@@ -58,3 +70,6 @@ and preferring core graphics stack libraries like `libdrm.so.2` or `libwayland-*
 distro/build image than your Mesa packages, EGL driver loading can fail in subtle ways (including missing
 `EGL_EXT_platform_base`). Prefer system `/usr/lib` versions of Mesa/DRM/Wayland, and only ship `libwlroots` + the
 non-graphics leaf deps you truly need.
+
+For multi-GPU systems, avoid forcing `WLR_DRM_NO_MODIFIERS=1` (or `ZENITH_DRM_NO_MODIFIERS=1`) unless you're
+debugging a specific driver bug, because it can break cross-GPU scanout/import paths.

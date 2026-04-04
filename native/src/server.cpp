@@ -98,28 +98,21 @@ static bool env_is_truthy(const char* value) {
 }
 
 static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode) {
-	const char* tweaks_env = std::getenv("ZENITH_DRM_STABILITY_TWEAKS");
-	const bool tweaks_enabled = tweaks_env == nullptr ? true : env_is_truthy(tweaks_env);
-
-	// Hybrid/multi-GPU + extended desktop is prone to modifier import issues on
-	// some drivers/ports (commonly HDMI on dGPU). Prefer safe buffers by default.
-	if (tweaks_enabled && mode == multimonitor::MultiMonitorMode::Extend &&
-	    std::getenv("WLR_DRM_NO_MODIFIERS") == nullptr) {
-		setenv("WLR_DRM_NO_MODIFIERS", "1", 0);
-		wlr_log(WLR_INFO,
-		        "zenith: enabling WLR_DRM_NO_MODIFIERS=1 for extend mode "
-		        "(set ZENITH_DRM_STABILITY_TWEAKS=0 to disable)");
-	}
-
 	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_MODIFIERS"))) {
 		setenv("WLR_DRM_NO_MODIFIERS", "1", 1);
-		wlr_log(WLR_INFO, "zenith: forcing WLR_DRM_NO_MODIFIERS=1 (ZENITH_DRM_NO_MODIFIERS)");
+		wlr_log(
+			WLR_INFO,
+			"zenith: forcing WLR_DRM_NO_MODIFIERS=1 (ZENITH_DRM_NO_MODIFIERS). "
+			"Warning: this may break multi-GPU output on some systems."
+		);
 	}
 
 	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_ATOMIC"))) {
 		setenv("WLR_DRM_NO_ATOMIC", "1", 1);
 		wlr_log(WLR_INFO, "zenith: forcing WLR_DRM_NO_ATOMIC=1 (ZENITH_DRM_NO_ATOMIC)");
 	}
+
+	(void)mode;
 }
 
 static void zenith_maybe_default_libseat_backend() {

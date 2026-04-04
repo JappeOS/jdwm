@@ -8,6 +8,12 @@ struct ZenithOutput;
 
 namespace zenith {
 
+enum class VsyncDriverMode {
+	RenderOutput,
+	ActiveOutput,
+	HighestRefresh,
+};
+
 class ZenithOutputManager {
 public:
 	ZenithOutputManager(ZenithServer* server, multimonitor::MultiMonitorMode mode);
@@ -29,10 +35,13 @@ public:
 
 	ZenithOutput* presentation_source_output(ZenithOutput* target_output) const;
 	ZenithOutput* current_render_output() const;
+	ZenithOutput* vsync_driver_output() const;
 
 private:
 	ZenithServer* server_ = nullptr;
 	multimonitor::MultiMonitorMode mode_ = multimonitor::MultiMonitorMode::Off;
+	VsyncDriverMode vsync_mode_ = VsyncDriverMode::RenderOutput;
+	mutable ZenithOutput* active_output_ = nullptr;
 
 	static void send_single_output_metrics(ZenithServer* server, ZenithOutput* output);
 	static void send_virtual_desktop_metrics(ZenithServer* server);

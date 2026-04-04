@@ -3,6 +3,7 @@
 #include "server.hpp"
 #include "output.hpp"
 #include <algorithm>
+#include <cstdlib>
 
 extern "C" {
 #define static
@@ -16,6 +17,58 @@ extern "C" {
 }
 
 namespace zenith {
+
+static bool equals_ignore_case(const char* value, const char* expected) {
+	if (value == nullptr || expected == nullptr) {
+		return false;
+	}
+	while (*value != '\0' && *expected != '\0') {
+		char a = *value;
+		char b = *expected;
+		if (a >= 'A' && a <= 'Z') {
+			a = static_cast<char>(a - 'A' + 'a');
+		}
+		if (b >= 'A' && b <= 'Z') {
+			b = static_cast<char>(b - 'A' + 'a');
+		}
+		if (a != b) {
+			return false;
+		}
+		++value;
+		++expected;
+	}
+	return *value == '\0' && *expected == '\0';
+}
+
+static VsyncDriverMode parse_vsync_driver_mode_from_env() {
+	const char* value = std::getenv("ZENITH_VSYNC_OUTPUT");
+	if (value == nullptr || value[0] == '\0') {
+		return VsyncDriverMode::ActiveOutput;
+	}
+	if (equals_ignore_case(value, "render") || equals_ignore_case(value, "source")) {
+		return VsyncDriverMode::RenderOutput;
+	}
+	if (equals_ignore_case(value, "active") || equals_ignore_case(value, "cursor")) {
+		return VsyncDriverMode::ActiveOutput;
+	}
+	if (equals_ignore_case(value, "highest_refresh") || equals_ignore_case(value, "max_refresh") ||
+	    equals_ignore_case(value, "fastest")) {
+		return VsyncDriverMode::HighestRefresh;
+	}
+	return VsyncDriverMode::ActiveOutput;
+}
+
+static const char* vsync_mode_to_string(VsyncDriverMode mode) {
+	switch (mode) {
+		case VsyncDriverMode::RenderOutput:
+			return "render";
+		case VsyncDriverMode::ActiveOutput:
+			return "active";
+		case VsyncDriverMode::HighestRefresh:
+			return "highest_refresh";
+	}
+	return "active";
+}
 
 static ZenithOutput* find_output_by_wlr_output(ZenithServer* server, struct wlr_output* wlr_output) {
 	if (wlr_output == nullptr) {
@@ -104,9 +157,48 @@ static void update_xwayland_workareas_for_layout(ZenithServer* server) {
 	);
 }
 
+static bool output_exists(ZenithServer* server, ZenithOutput* output) {
+	if (server == nullptr || output == nullptr) {
+		return false;
+	}
+	for (const auto& candidate : server->outputs) {
+		if (candidate.get() == output) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static ZenithOutput* pick_highest_refresh_output(ZenithServer* server) {
+	if (server == nullptr) {
+		return nullptr;
+	}
+	ZenithOutput* best_output = nullptr;
+	int best_refresh = 0;
+	for (const auto& output : server->outputs) {
+		if (output == nullptr || output->wlr_output == nullptr) {
+			continue;
+		}
+		int refresh = output->wlr_output->refresh;
+		if (refresh <= 0) {
+			refresh = 60'000;
+		}
+		if (best_output == nullptr || refresh > best_refresh) {
+			best_output = output.get();
+			best_refresh = refresh;
+		}
+	}
+	return best_output;
+}
+
 ZenithOutputManager::ZenithOutputManager(
 	ZenithServer* server, multimonitor::MultiMonitorMode mode)
-	: server_(server), mode_(mode) {
+	: server_(server), mode_(mode), vsync_mode_(parse_vsync_driver_mode_from_env()) {
+	wlr_log(
+		WLR_INFO,
+		"zenith: vsync driver mode=%s (ZENITH_VSYNC_OUTPUT)",
+		vsync_mode_to_string(vsync_mode_)
+	);
 }
 
 multimonitor::MultiMonitorMode ZenithOutputManager::mode() const {
@@ -182,6 +274,9 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 	if (output == nullptr) {
 		return;
 	}
+	if (active_output_ == nullptr) {
+		active_output_ = output.get();
+	}
 
 	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
 		add_output_to_layout(server_, output.get());
@@ -238,6 +333,10 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 			return o.get() == removed_output;
 		});
 	server_->outputs.erase(it, server_->outputs.end());
+
+	if (active_output_ == removed_output) {
+		active_output_ = server_->outputs.empty() ? nullptr : server_->outputs.front().get();
+	}
 
 	if (server_->outputs.empty()) {
 		server_->output = nullptr;
@@ -329,9 +428,15 @@ float ZenithOutputManager::pointer_scale_at(double x, double y) const {
 
 void ZenithOutputManager::schedule_cursor_frame(double x, double y) const {
 	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		ZenithOutput* output = output_for_cursor(x, y);
-		if (output != nullptr && output->wlr_output != nullptr) {
-			wlr_output_schedule_frame(output->wlr_output);
+		ZenithOutput* cursor_output = output_for_cursor(x, y);
+		if (cursor_output != nullptr && cursor_output->wlr_output != nullptr) {
+			wlr_output_schedule_frame(cursor_output->wlr_output);
+		}
+		ZenithOutput* driver_output = vsync_driver_output();
+		if (driver_output != nullptr &&
+		    driver_output->wlr_output != nullptr &&
+		    driver_output != cursor_output) {
+			wlr_output_schedule_frame(driver_output->wlr_output);
 		}
 		return;
 	}
@@ -382,8 +487,10 @@ void ZenithOutputManager::update_active_output_from_cursor(double x, double y) c
 	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
 		return;
 	}
-	(void) x;
-	(void) y;
+	ZenithOutput* hovered = output_for_cursor(x, y);
+	if (hovered != nullptr) {
+		active_output_ = hovered;
+	}
 }
 
 ZenithOutput* ZenithOutputManager::presentation_source_output(ZenithOutput* target_output) const {
@@ -403,6 +510,29 @@ ZenithOutput* ZenithOutputManager::current_render_output() const {
 		return server_->outputs.back().get();
 	}
 	return nullptr;
+}
+
+ZenithOutput* ZenithOutputManager::vsync_driver_output() const {
+	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
+		return current_render_output();
+	}
+
+	if (!output_exists(server_, active_output_)) {
+		active_output_ = nullptr;
+	}
+
+	switch (vsync_mode_) {
+		case VsyncDriverMode::RenderOutput:
+			return current_render_output();
+		case VsyncDriverMode::ActiveOutput:
+			if (active_output_ != nullptr) {
+				return active_output_;
+			}
+			return pick_highest_refresh_output(server_);
+		case VsyncDriverMode::HighestRefresh:
+			return pick_highest_refresh_output(server_);
+	}
+	return current_render_output();
 }
 
 } // namespace zenith

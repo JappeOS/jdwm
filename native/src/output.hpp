@@ -28,6 +28,7 @@ struct ZenithOutput {
 	wl_listener destroy{};
 	wl_event_source* schedule_frame_timer;
 	bool software_cursor_locked = false;
+	bool attach_render_locked = false;
 	bool cursor_mode_logged = false;
 	bool last_software_cursor_active = false;
 
@@ -38,6 +39,7 @@ struct ZenithOutput {
 	int swapchain_height = 0;
 
 	std::unique_ptr<SwapChain<wlr_gles2_buffer>> swap_chain;
+	std::shared_ptr<Slot<wlr_gles2_buffer>> presented_slot = nullptr;
 
 	bool enable();
 
@@ -60,5 +62,6 @@ void output_frame(wl_listener* listener, void* data);
 void output_request_state(wl_listener* listener, void* data);
 
 int vsync_callback(void* data);
+int vsync_callback(void* data, struct wlr_output* timing_output);
 
 void output_destroy(wl_listener* listener, void* data);

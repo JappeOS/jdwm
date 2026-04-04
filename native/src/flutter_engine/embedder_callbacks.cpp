@@ -42,6 +42,9 @@ GLuint attach_framebuffer() {
 		return 0;
 	}
 	wlr_gles2_buffer* gles2_buffer = output->swap_chain->start_write();
+	if (gles2_buffer == nullptr) {
+		return 0;
+	}
 	return gles2_buffer->fbo;
 }
 

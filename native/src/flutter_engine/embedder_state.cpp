@@ -11,6 +11,7 @@
 #include "cursor_debug.hpp"
 #include "json_method_codec.h"
 #include "keyboard_helpers.hpp"
+#include "time.hpp"
 
 #include <unordered_map>  // for std::unordered_map
 #include <memory>         // for std::shared_ptr
