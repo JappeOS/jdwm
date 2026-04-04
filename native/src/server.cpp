@@ -8,6 +8,7 @@
 #include "output/zenith_output_manager.hpp"
 #include "build_info.hpp"
 #include "xwayland_debug.hpp"
+#include "cursor_debug.hpp"
 #include <unistd.h>
 #include <sys/eventfd.h>
 #include <cstdio>
@@ -576,6 +577,17 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 	/* This can be sent by any client, so we check to make sure this one is
 	 * actually has pointer focus first. */
 	if (allowed) {
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:cursor request_set_cursor allowed=1 event_surface=%p mapped=%d pointer_visible=%d forced_hidden=%d current=%s",
+				(void*) event->surface,
+				(event->surface != nullptr && event->surface->mapped) ? 1 : 0,
+				(server->pointer != nullptr && server->pointer->is_visible()) ? 1 : 0,
+				(server->pointer != nullptr && server->pointer->is_forced_hidden()) ? 1 : 0,
+				server->pointer != nullptr ? server->pointer->current_cursor_name() : "<none>"
+			);
+		}
 		/* Once we've vetted the client, we can tell the cursor to use the
 		 * provided surface as the cursor image. It will set the hardware cursor
 		 * on the output that it's currently on and continue to do so as the
@@ -591,11 +603,17 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 					);
 				} else {
 					// Ignore stale cursor surfaces from unmapped windows.
+					if (zenith_cursor_debug_enabled()) {
+						wlr_log(WLR_INFO, "zenith:cursor request_set_cursor ignored unmapped surface");
+					}
 					server->pointer->restore_default_cursor();
 				}
 			} else {
 				// Some clients may request a null cursor surface during teardown.
 				// Keep compositor cursor visible unless explicitly hidden by JDWM.
+				if (zenith_cursor_debug_enabled()) {
+					wlr_log(WLR_INFO, "zenith:cursor request_set_cursor null surface -> restore default");
+				}
 				server->pointer->restore_default_cursor();
 			}
 			// If this is a software cursor, it becomes visible on the next rendered frame.

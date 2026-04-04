@@ -3,6 +3,7 @@
 #include "binary_messenger.hpp"
 #include "server.hpp"
 #include "assert.hpp"
+#include "cursor_debug.hpp"
 #include "output/zenith_output_manager.hpp"
 
 extern "C" {
@@ -18,6 +19,9 @@ static bool pointer_focus_belongs_to_same_client(
 	}
 	wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
 	if (focused_surface == nullptr) {
+		return false;
+	}
+	if (surface->resource == nullptr || focused_surface->resource == nullptr) {
 		return false;
 	}
 	wl_client* surface_client = wl_resource_get_client(surface->resource);
@@ -110,10 +114,22 @@ void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
 	}
 
 	if (pointer_focus_belongs_to_same_client(server, zenith_xdg_surface->xdg_surface->surface)) {
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(WLR_INFO, "zenith:cursor xdg_unmap clear pointer focus by client match id=%zu", id);
+		}
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 	}
 	if (server->pointer != nullptr && server->pointer->is_visible()) {
 		// Prevent stale client cursor surfaces from a just-unmapped window.
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:cursor xdg_unmap restore default id=%zu forced_hidden=%d cursor=%s",
+				id,
+				server->pointer->is_forced_hidden() ? 1 : 0,
+				server->pointer->current_cursor_name()
+			);
+		}
 		server->pointer->restore_default_cursor();
 	}
 	server->embedder_state->unmap_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
@@ -139,10 +155,22 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 	}
 
 	if (pointer_focus_belongs_to_same_client(server, zenith_xdg_surface->xdg_surface->surface)) {
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(WLR_INFO, "zenith:cursor xdg_destroy clear pointer focus by client match id=%zu", id);
+		}
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 	}
 	if (server->pointer != nullptr && server->pointer->is_visible()) {
 		// Prevent stale client cursor surfaces from a just-destroyed window.
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:cursor xdg_destroy restore default id=%zu forced_hidden=%d cursor=%s",
+				id,
+				server->pointer->is_forced_hidden() ? 1 : 0,
+				server->pointer->current_cursor_name()
+			);
+		}
 		server->pointer->restore_default_cursor();
 	}
 

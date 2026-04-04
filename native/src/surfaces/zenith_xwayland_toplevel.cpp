@@ -4,6 +4,7 @@
 #include "surfaces/zenith_surface.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "xwayland_debug.hpp"
+#include "cursor_debug.hpp"
 
 extern "C" {
 #include <wlr/util/log.h>
@@ -22,6 +23,9 @@ static bool pointer_focus_belongs_to_same_client(
 	}
 	wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
 	if (focused_surface == nullptr) {
+		return false;
+	}
+	if (surface->resource == nullptr || focused_surface->resource == nullptr) {
 		return false;
 	}
 	wl_client* surface_client = wl_resource_get_client(surface->resource);
@@ -347,11 +351,23 @@ void ZenithXwaylandToplevel::handle_unmap() {
 			}
 		}
 		if (pointer_focus_belongs_to_same_client(server, surface)) {
+			if (zenith_cursor_debug_enabled()) {
+				wlr_log(WLR_INFO, "zenith:cursor xwayland_unmap clear pointer focus by client match view=%zu", view_id);
+			}
 			wlr_seat_pointer_notify_clear_focus(server->seat);
 		}
 	}
 	if (server->pointer != nullptr && server->pointer->is_visible()) {
 		// Prevent stale client cursor surfaces from a just-unmapped window.
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:cursor xwayland_unmap restore default view=%zu forced_hidden=%d cursor=%s",
+				view_id,
+				server->pointer->is_forced_hidden() ? 1 : 0,
+				server->pointer->current_cursor_name()
+			);
+		}
 		server->pointer->restore_default_cursor();
 	}
 

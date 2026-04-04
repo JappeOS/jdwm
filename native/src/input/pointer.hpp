@@ -44,6 +44,14 @@ private:
 			return manual_lock || client_lock;
 		}
 
+		bool is_forced_hidden() const {
+			return forced_hidden;
+		}
+
+		const char* current_cursor_name() const {
+			return cursor_name.c_str();
+		}
+
 		void set_visible(bool value);
 		void set_forced_hidden(bool value);
 		void reveal_from_input_activity();

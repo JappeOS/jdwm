@@ -5,6 +5,7 @@
 #include "pointer.hpp"
 #include "server.hpp"
 #include "time.hpp"
+#include "cursor_debug.hpp"
 #include "output/zenith_output_manager.hpp"
 #include <iostream>
 #include <cmath>
@@ -55,6 +56,15 @@ void ZenithPointer::set_visible(bool value) {
 		return;
 	}
 	visible = value;
+	if (zenith_cursor_debug_enabled()) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:cursor set_visible=%d forced_hidden=%d cursor=%s",
+			visible ? 1 : 0,
+			forced_hidden ? 1 : 0,
+			cursor_name.c_str()
+		);
+	}
 	if (visible) {
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
 	} else {
@@ -70,11 +80,22 @@ void ZenithPointer::set_forced_hidden(bool value) {
 		return;
 	}
 	forced_hidden = value;
+	if (zenith_cursor_debug_enabled()) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:cursor set_forced_hidden=%d visible_before=%d",
+			forced_hidden ? 1 : 0,
+			visible ? 1 : 0
+		);
+	}
 	set_visible(!forced_hidden);
 }
 
 void ZenithPointer::reveal_from_input_activity() {
 	if (forced_hidden) {
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(WLR_INFO, "zenith:cursor reveal_from_input_activity suppressed (forced hidden)");
+		}
 		return;
 	}
 	set_visible(true);
@@ -84,6 +105,15 @@ void ZenithPointer::set_cursor_name(const char* value) {
 	const char* next = (value != nullptr && value[0] != '\0') ? value : "left_ptr";
 	if (cursor_name == next) {
 		return;
+	}
+	if (zenith_cursor_debug_enabled()) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:cursor set_cursor_name=%s visible=%d forced_hidden=%d",
+			next,
+			visible ? 1 : 0,
+			forced_hidden ? 1 : 0
+		);
 	}
 	cursor_name = next;
 	if (!visible) {

@@ -16,6 +16,7 @@
 #include "auth.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "xwayland_input_helpers.hpp"
+#include "cursor_debug.hpp"
 
 extern "C" {
 #define static
@@ -175,6 +176,15 @@ void pointer_exit(ZenithServer* server,
 		zenith::xwayland_input::log_pointer_focus_debug("after-clear-focus", server, 0, nullptr, 0.0, 0.0, false, false);
 		server_update_pointer_constraint(server);
 		if (server->pointer != nullptr) {
+			if (zenith_cursor_debug_enabled()) {
+				wlr_log(
+					WLR_INFO,
+					"zenith:cursor pointer_exit restore default visible=%d forced_hidden=%d current=%s",
+					server->pointer->is_visible() ? 1 : 0,
+					server->pointer->is_forced_hidden() ? 1 : 0,
+					server->pointer->current_cursor_name()
+				);
+			}
 			server->pointer->set_cursor_name("left_ptr");
 		}
 	});
@@ -627,6 +637,16 @@ void set_cursor_visible(ZenithServer* server, const flutter::MethodCall<>& call,
 	auto value = std::get<bool>(call.arguments()[0]);
 	server->callable_queue.enqueue([server, value] {
 		if (server->pointer != nullptr) {
+			if (zenith_cursor_debug_enabled()) {
+				wlr_log(
+					WLR_INFO,
+					"zenith:cursor set_cursor_visible=%d (before visible=%d forced_hidden=%d current=%s)",
+					value ? 1 : 0,
+					server->pointer->is_visible() ? 1 : 0,
+					server->pointer->is_forced_hidden() ? 1 : 0,
+					server->pointer->current_cursor_name()
+				);
+			}
 			server->pointer->set_forced_hidden(!value);
 		}
 	});

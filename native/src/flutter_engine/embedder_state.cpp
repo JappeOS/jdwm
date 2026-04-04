@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include "server.hpp"
 #include "cursor_image_mapping.hpp"
+#include "cursor_debug.hpp"
 #include "json_method_codec.h"
 #include "keyboard_helpers.hpp"
 
@@ -23,6 +24,7 @@ using namespace flutter;
 extern "C" {
 #define static
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/util/log.h>
 #undef static
 }
 
@@ -314,6 +316,16 @@ void EmbedderState::register_platform_api() {
 						  const char* cursor = "left_ptr";
 						  if (iter != g_cursor_image_mapping.end()) {
 							  cursor = iter->second;
+						  }
+						  if (zenith_cursor_debug_enabled()) {
+							  wlr_log(
+								  WLR_INFO,
+								  "zenith:cursor activateSystemCursor kind=%s mapped=%s visible=%d forced_hidden=%d",
+								  kind.c_str(),
+								  cursor,
+								  server->pointer->is_visible() ? 1 : 0,
+								  server->pointer->is_forced_hidden() ? 1 : 0
+							  );
 						  }
 						  server->pointer->set_cursor_name(cursor);
 					  }
