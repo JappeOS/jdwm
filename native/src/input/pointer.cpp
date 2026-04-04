@@ -104,6 +104,21 @@ void ZenithPointer::reveal_from_input_activity() {
 void ZenithPointer::set_cursor_name(const char* value) {
 	const char* next = (value != nullptr && value[0] != '\0') ? value : "left_ptr";
 	if (cursor_name == next) {
+		// Cursor source may currently be a client-provided surface. Re-apply
+		// compositor cursor image even if the logical name is unchanged.
+		if (zenith_cursor_debug_enabled()) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:cursor set_cursor_name reapply=%s visible=%d forced_hidden=%d",
+				cursor_name.c_str(),
+				visible ? 1 : 0,
+				forced_hidden ? 1 : 0
+			);
+		}
+		if (visible) {
+			wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
+			schedule_cursor_frame(server);
+		}
 		return;
 	}
 	if (zenith_cursor_debug_enabled()) {
