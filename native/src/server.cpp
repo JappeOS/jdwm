@@ -52,6 +52,7 @@ static void server_xwayland_ready(wl_listener* listener, void* data);
 static void zenith_maybe_default_libseat_backend();
 static void zenith_preflight_libseat();
 static void zenith_debug_log_loaded_libs();
+static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode);
 
 static bool path_exists(const char* path) {
 	return path != nullptr && access(path, F_OK) == 0;
@@ -59,6 +60,66 @@ static bool path_exists(const char* path) {
 
 static bool env_equals(const char* env_value, const char* expected) {
 	return env_value != nullptr && expected != nullptr && std::string(env_value) == expected;
+}
+
+static bool equals_ignore_case(const char* value, const char* expected) {
+	if (value == nullptr || expected == nullptr) {
+		return false;
+	}
+	while (*value != '\0' && *expected != '\0') {
+		char a = *value;
+		char b = *expected;
+		if (a >= 'A' && a <= 'Z') {
+			a = (char)(a - 'A' + 'a');
+		}
+		if (b >= 'A' && b <= 'Z') {
+			b = (char)(b - 'A' + 'a');
+		}
+		if (a != b) {
+			return false;
+		}
+		++value;
+		++expected;
+	}
+	return *value == '\0' && *expected == '\0';
+}
+
+static bool env_is_truthy(const char* value) {
+	if (value == nullptr || value[0] == '\0') {
+		return false;
+	}
+	if (equals_ignore_case(value, "0") ||
+	    equals_ignore_case(value, "false") ||
+	    equals_ignore_case(value, "off") ||
+	    equals_ignore_case(value, "no")) {
+		return false;
+	}
+	return true;
+}
+
+static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode) {
+	const char* tweaks_env = std::getenv("ZENITH_DRM_STABILITY_TWEAKS");
+	const bool tweaks_enabled = tweaks_env == nullptr ? true : env_is_truthy(tweaks_env);
+
+	// Hybrid/multi-GPU + extended desktop is prone to modifier import issues on
+	// some drivers/ports (commonly HDMI on dGPU). Prefer safe buffers by default.
+	if (tweaks_enabled && mode == multimonitor::MultiMonitorMode::Extend &&
+	    std::getenv("WLR_DRM_NO_MODIFIERS") == nullptr) {
+		setenv("WLR_DRM_NO_MODIFIERS", "1", 0);
+		wlr_log(WLR_INFO,
+		        "zenith: enabling WLR_DRM_NO_MODIFIERS=1 for extend mode "
+		        "(set ZENITH_DRM_STABILITY_TWEAKS=0 to disable)");
+	}
+
+	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_MODIFIERS"))) {
+		setenv("WLR_DRM_NO_MODIFIERS", "1", 1);
+		wlr_log(WLR_INFO, "zenith: forcing WLR_DRM_NO_MODIFIERS=1 (ZENITH_DRM_NO_MODIFIERS)");
+	}
+
+	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_ATOMIC"))) {
+		setenv("WLR_DRM_NO_ATOMIC", "1", 1);
+		wlr_log(WLR_INFO, "zenith: forcing WLR_DRM_NO_ATOMIC=1 (ZENITH_DRM_NO_ATOMIC)");
+	}
 }
 
 static void zenith_maybe_default_libseat_backend() {
@@ -200,6 +261,7 @@ ZenithServer::ZenithServer() {
 	const auto multi_monitor_mode = multimonitor::parse_multi_monitor_mode_from_env();
 	output_manager = std::make_unique<zenith::ZenithOutputManager>(this, multi_monitor_mode);
 	wlr_log(WLR_INFO, "zenith: multi-monitor mode=%s", multimonitor::to_string(multi_monitor_mode));
+	zenith_configure_drm_stability(multi_monitor_mode);
 
 	display = wl_display_create();
 	if (display == nullptr) {
