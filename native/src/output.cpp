@@ -51,6 +51,37 @@ ZenithOutput::ZenithOutput(struct wlr_output* wlr_output)
 static std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_swap_chain(
 	wlr_output* wlr_output, int width_override = 0, int height_override = 0);
 
+static size_t parse_swapchain_buffer_count_override() {
+	const char* value = std::getenv("ZENITH_SWAPCHAIN_BUFFERS");
+	if (value == nullptr || value[0] == '\0') {
+		return 0;
+	}
+	char* end = nullptr;
+	unsigned long parsed = std::strtoul(value, &end, 10);
+	if (end == value || (end != nullptr && *end != '\0')) {
+		return 0;
+	}
+	if (parsed < 4) {
+		return 4;
+	}
+	return static_cast<size_t>(parsed);
+}
+
+static size_t desired_swapchain_buffer_count(ZenithServer* server) {
+	const size_t override_value = parse_swapchain_buffer_count_override();
+	if (override_value != 0) {
+		return override_value;
+	}
+	if (server != nullptr && server->output_manager != nullptr &&
+	    server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
+		// Extended desktop can be presented by multiple outputs with different
+		// refresh rates. Keep a deeper history to avoid reusing a buffer that is
+		// still being scanned out on another output/GPU.
+		return 8;
+	}
+	return 4;
+}
+
 static bool software_cursor_active(wlr_output* wlr_output) {
 	struct wlr_output_cursor* cur;
 	wl_list_for_each(cur, &wlr_output->cursors, link) {
@@ -148,42 +179,52 @@ void output_frame(wl_listener* listener, void* data) {
 
 	log_cursor_mode_transition(output);
 
-	vsync_callback(server);
-
-	timespec now{};
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	for (auto& [id, view]: server->xdg_toplevels) {
-		wlr_xdg_surface* xdg_surface = view->xdg_toplevel->base;
-		if (!xdg_surface->surface->mapped || !view->visible()) {
-			// An unmapped view should not be rendered.
-			continue;
-		}
-
-		// Notify all mapped surfaces belonging to this toplevel.
-		wlr_xdg_surface_for_each_surface(xdg_surface, [](struct wlr_surface* surface, int sx, int sy, void* data) {
-			auto* now = static_cast<timespec*>(data);
-			wlr_surface_send_frame_done(surface, now);
-		}, &now);
-	}
-
-	for (auto& [id, view]: server->xwayland_toplevels) {
-		(void)id;
-		wlr_surface* surface = view->xwayland_surface->surface;
-		if (surface == nullptr || !surface->mapped || !view->visible()) {
-			continue;
-		}
-		wlr_surface_for_each_surface(surface, [](struct wlr_surface* child, int sx, int sy, void* data) {
-			(void)sx;
-			(void)sy;
-			auto* now = static_cast<timespec*>(data);
-			wlr_surface_send_frame_done(child, now);
-		}, &now);
-	}
-
 	ZenithOutput* source_output = server->output_manager->presentation_source_output(output);
 	if (source_output == nullptr || source_output->swap_chain == nullptr) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
+	}
+	if (output == source_output) {
+		timespec frame_done_now{};
+		clock_gettime(CLOCK_MONOTONIC, &frame_done_now);
+		for (auto& [id, view]: server->xdg_toplevels) {
+			(void)id;
+			wlr_xdg_surface* xdg_surface = view->xdg_toplevel->base;
+			if (!xdg_surface->surface->mapped || !view->visible()) {
+				continue;
+			}
+
+			wlr_xdg_surface_for_each_surface(
+				xdg_surface,
+				[](struct wlr_surface* surface, int sx, int sy, void* data) {
+					(void)sx;
+					(void)sy;
+					auto* now = static_cast<timespec*>(data);
+					wlr_surface_send_frame_done(surface, now);
+				},
+				&frame_done_now
+			);
+		}
+
+		for (auto& [id, view]: server->xwayland_toplevels) {
+			(void)id;
+			wlr_surface* surface = view->xwayland_surface->surface;
+			if (surface == nullptr || !surface->mapped || !view->visible()) {
+				continue;
+			}
+			wlr_surface_for_each_surface(
+				surface,
+				[](struct wlr_surface* child, int sx, int sy, void* data) {
+					(void)sx;
+					(void)sy;
+					auto* now = static_cast<timespec*>(data);
+					wlr_surface_send_frame_done(child, now);
+				},
+				&frame_done_now
+			);
+		}
+
+		vsync_callback(server);
 	}
 
 	wlr_gles2_buffer* source_buffer = source_output->swap_chain->start_read();
@@ -232,6 +273,8 @@ void output_frame(wl_listener* listener, void* data) {
 	}
 
 	// Notify scene-managed surfaces that this output frame has been presented.
+	timespec now{};
+	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(output->scene_output, &now);
 }
 
@@ -277,20 +320,24 @@ std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_swap_chain(
 
 	wlr_egl_make_current(wlr_gles2_renderer_get_egl(server->renderer), NULL);
 
-	std::array<std::shared_ptr<wlr_gles2_buffer>, 4> buffers = {};
+	const size_t buffer_count = desired_swapchain_buffer_count(server);
+	std::vector<std::shared_ptr<wlr_gles2_buffer>> buffers;
+	buffers.reserve(buffer_count);
 	const int width = width_override > 0 ? width_override : wlr_output->width;
 	const int height = height_override > 0 ? height_override : wlr_output->height;
 
 	wlr_drm_format* drm_format = get_output_format(wlr_output);
-	for (auto& buffer: buffers) {
+	for (size_t i = 0; i < buffer_count; i++) {
 		wlr_buffer* buf = wlr_allocator_create_buffer(server->allocator, width, height,
 		                                              drm_format);
 		assert(wlr_renderer_is_gles2(server->renderer));
 		auto* gles2_renderer = (struct wlr_gles2_renderer*) server->renderer;
 		wlr_gles2_buffer* gles2_buffer = create_buffer(gles2_renderer, buf);
-		buffer = scoped_wlr_gles2_buffer(gles2_buffer);
+		buffers.emplace_back(scoped_wlr_gles2_buffer(gles2_buffer));
 	}
 
+	wlr_log(WLR_INFO, "zenith: swapchain output='%s' size=%dx%d buffers=%zu",
+	        wlr_output->name, width, height, buffer_count);
 	return std::make_unique<SwapChain<wlr_gles2_buffer>>(buffers);
 }
 

@@ -20,20 +20,14 @@ struct Slot {
 
 template<class T>
 struct SwapChain {
-	explicit SwapChain(const std::array<std::shared_ptr<T>, 4>& buffers);
+	explicit SwapChain(std::vector<std::shared_ptr<T>> buffers);
 
 	std::mutex mutex = {};
 
-	/*
-	 * We need 2 read buffers because when start_read is called, the monitor might not have finished
-	 * scanning out the previous frame. We don't want the frame to be picked up right away for writing.
-	 * That's why, instead of just swapping read1 and latest, we do a circular swap between read1, read2, and latest.
-	 * read1 = latest
-	 * read2 = read1
-	 * latest = read2
-	 */
-	std::shared_ptr<Slot<T>> read_buffer_1 = {};
-	std::shared_ptr<Slot<T>> read_buffer_2 = {};
+	// Oldest-to-newest read slots. Slot 0 is the buffer returned by start_read().
+	// Keeping multiple historical read buffers delays buffer reuse, which is
+	// important when multiple outputs scan out asynchronously.
+	std::vector<std::shared_ptr<Slot<T>>> read_buffers = {};
 	std::shared_ptr<Slot<T>> write_buffer = {};
 	std::shared_ptr<Slot<T>> latest_buffer = {};
 
