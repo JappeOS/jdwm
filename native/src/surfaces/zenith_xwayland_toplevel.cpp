@@ -13,6 +13,22 @@ extern "C" {
 #undef class
 }
 
+static bool pointer_focus_belongs_to_same_client(
+	ZenithServer* server,
+	wlr_surface* surface
+) {
+	if (server == nullptr || surface == nullptr) {
+		return false;
+	}
+	wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
+	if (focused_surface == nullptr) {
+		return false;
+	}
+	wl_client* surface_client = wl_resource_get_client(surface->resource);
+	wl_client* focused_client = wl_resource_get_client(focused_surface->resource);
+	return surface_client != nullptr && surface_client == focused_client;
+}
+
 static int managed_x_for(const ZenithXwaylandToplevel* toplevel) {
 	if (toplevel == nullptr || toplevel->xwayland_surface == nullptr) {
 		return 0;
@@ -330,7 +346,7 @@ void ZenithXwaylandToplevel::handle_unmap() {
 				text_input->leave();
 			}
 		}
-		if (server->seat->pointer_state.focused_surface == surface) {
+		if (pointer_focus_belongs_to_same_client(server, surface)) {
 			wlr_seat_pointer_notify_clear_focus(server->seat);
 		}
 	}

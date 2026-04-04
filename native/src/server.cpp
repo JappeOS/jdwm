@@ -582,12 +582,17 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 		 * cursor moves between outputs. */
 		if (server->pointer != nullptr && server->pointer->is_visible()) {
 			if (event->surface != nullptr) {
-				wlr_cursor_set_surface(
-					server->pointer->cursor,
-					event->surface,
-					event->hotspot_x,
-					event->hotspot_y
-				);
+				if (event->surface->mapped) {
+					wlr_cursor_set_surface(
+						server->pointer->cursor,
+						event->surface,
+						event->hotspot_x,
+						event->hotspot_y
+					);
+				} else {
+					// Ignore stale cursor surfaces from unmapped windows.
+					server->pointer->restore_default_cursor();
+				}
 			} else {
 				// Some clients may request a null cursor surface during teardown.
 				// Keep compositor cursor visible unless explicitly hidden by JDWM.

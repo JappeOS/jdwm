@@ -9,6 +9,22 @@ extern "C" {
 #include <wlr/util/log.h>
 }
 
+static bool pointer_focus_belongs_to_same_client(
+	ZenithServer* server,
+	wlr_surface* surface
+) {
+	if (server == nullptr || surface == nullptr) {
+		return false;
+	}
+	wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
+	if (focused_surface == nullptr) {
+		return false;
+	}
+	wl_client* surface_client = wl_resource_get_client(surface->resource);
+	wl_client* focused_client = wl_resource_get_client(focused_surface->resource);
+	return surface_client != nullptr && surface_client == focused_client;
+}
+
 ZenithXdgSurface::ZenithXdgSurface(wlr_xdg_surface* xdg_surface, std::shared_ptr<ZenithSurface> zenith_surface)
 	  : xdg_surface{xdg_surface}, zenith_surface(std::move(zenith_surface)) {
 	destroy.notify = zenith_xdg_surface_destroy;
@@ -93,7 +109,7 @@ void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
 		}
 	}
 
-	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
+	if (pointer_focus_belongs_to_same_client(server, zenith_xdg_surface->xdg_surface->surface)) {
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 	}
 	if (server->pointer != nullptr && server->pointer->is_visible()) {
@@ -122,7 +138,7 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 		}
 	}
 
-	if (server->seat->pointer_state.focused_surface == zenith_xdg_surface->xdg_surface->surface) {
+	if (pointer_focus_belongs_to_same_client(server, zenith_xdg_surface->xdg_surface->surface)) {
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 	}
 	if (server->pointer != nullptr && server->pointer->is_visible()) {
