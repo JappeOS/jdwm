@@ -82,6 +82,48 @@ static ZenithOutput* find_output_by_wlr_output(ZenithServer* server, struct wlr_
 	return nullptr;
 }
 
+static bool output_box_in_source_space(
+	ZenithServer* server, ZenithOutput* output, struct wlr_box* source_box_out) {
+	if (server == nullptr ||
+	    output == nullptr ||
+	    output->wlr_output == nullptr ||
+	    server->output_layout == nullptr ||
+	    source_box_out == nullptr) {
+		return false;
+	}
+
+	struct wlr_box extents = {};
+	struct wlr_box output_box = {};
+	wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
+	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &output_box);
+
+	source_box_out->x = output_box.x - extents.x;
+	source_box_out->y = output_box.y - extents.y;
+	source_box_out->width = output_box.width;
+	source_box_out->height = output_box.height;
+	return source_box_out->width > 0 && source_box_out->height > 0;
+}
+
+static bool damage_intersects_output_box(
+	const std::vector<FlutterRect>& damage, const struct wlr_box& output_box) {
+	if (damage.empty() || output_box.width <= 0 || output_box.height <= 0) {
+		return false;
+	}
+
+	const double left = static_cast<double>(output_box.x);
+	const double top = static_cast<double>(output_box.y);
+	const double right = static_cast<double>(output_box.x + output_box.width);
+	const double bottom = static_cast<double>(output_box.y + output_box.height);
+
+	for (const auto& rect : damage) {
+		if (rect.right <= left || rect.left >= right || rect.bottom <= top || rect.top >= bottom) {
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
 static void get_layout_extents_or_output(
 	ZenithServer* server, ZenithOutput* fallback_output, int* width, int* height) {
 	*width = 0;
@@ -98,21 +140,27 @@ static void get_layout_extents_or_output(
 	}
 }
 
-static void ensure_extend_render_target(ZenithServer* server) {
-	if (server->output == nullptr) {
+static void ensure_extend_render_target(ZenithServer* server, ZenithOutput* render_output) {
+	if (server == nullptr || render_output == nullptr) {
 		return;
 	}
 	int width = 0;
 	int height = 0;
-	get_layout_extents_or_output(server, server->output.get(), &width, &height);
+	get_layout_extents_or_output(server, render_output, &width, &height);
 	if (width <= 0 || height <= 0) {
 		return;
 	}
-	if (server->output->swap_chain == nullptr ||
-	    server->output->swapchain_width != width ||
-	    server->output->swapchain_height != height) {
-		server->output->recreate_swapchain(width, height);
-		wlr_log(WLR_INFO, "zenith: extend render target resized to %dx%d", width, height);
+	if (render_output->swap_chain == nullptr ||
+	    render_output->swapchain_width != width ||
+	    render_output->swapchain_height != height) {
+		render_output->recreate_swapchain(width, height);
+		wlr_log(
+			WLR_INFO,
+			"zenith: extend render target output='%s' resized to %dx%d",
+			render_output->wlr_output != nullptr ? render_output->wlr_output->name : "unknown",
+			width,
+			height
+		);
 	}
 }
 
@@ -284,7 +332,7 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 		if (server_->output == nullptr) {
 			server_->output = output;
 		}
-		ensure_extend_render_target(server_);
+		ensure_extend_render_target(server_, server_->output.get());
 		send_virtual_desktop_metrics(server_);
 		update_xwayland_workareas_for_layout(server_);
 		struct wlr_box extents = {};
@@ -352,7 +400,7 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 			server_->output = server_->outputs.front();
 		}
 		update_scene_node_positions(server_);
-		ensure_extend_render_target(server_);
+		ensure_extend_render_target(server_, server_->output.get());
 		send_virtual_desktop_metrics(server_);
 		update_xwayland_workareas_for_layout(server_);
 		if (server_->embedder_state != nullptr) {
@@ -389,7 +437,7 @@ void ZenithOutputManager::handle_output_state_changed(ZenithOutput* changed_outp
 	}
 	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
 		update_scene_node_positions(server_);
-		ensure_extend_render_target(server_);
+		ensure_extend_render_target(server_, server_->output.get());
 		send_virtual_desktop_metrics(server_);
 		update_xwayland_workareas_for_layout(server_);
 		if (server_->embedder_state != nullptr) {
@@ -459,6 +507,41 @@ void ZenithOutputManager::schedule_compositor_frame() const {
 	}
 }
 
+void ZenithOutputManager::schedule_compositor_frame(const std::vector<FlutterRect>& frame_damage) const {
+	if (mode_ != multimonitor::MultiMonitorMode::Extend || frame_damage.empty()) {
+		schedule_compositor_frame();
+		return;
+	}
+
+	bool scheduled_any = false;
+	for (const auto& output : server_->outputs) {
+		if (output == nullptr || output->wlr_output == nullptr) {
+			continue;
+		}
+		struct wlr_box source_box = {};
+		if (!output_box_in_source_space(server_, output.get(), &source_box)) {
+			continue;
+		}
+		if (!damage_intersects_output_box(frame_damage, source_box)) {
+			continue;
+		}
+		wlr_output_schedule_frame(output->wlr_output);
+		scheduled_any = true;
+	}
+
+	ZenithOutput* driver_output = vsync_driver_output();
+	if (driver_output != nullptr && driver_output->wlr_output != nullptr) {
+		wlr_output_schedule_frame(driver_output->wlr_output);
+		scheduled_any = true;
+	}
+
+	if (!scheduled_any) {
+		// Conservative fallback: if damage metadata is inconsistent, don't risk
+		// stalling output updates.
+		schedule_compositor_frame();
+	}
+}
+
 void ZenithOutputManager::set_display_enabled(bool enable) const {
 	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
 		for (const auto& output : server_->outputs) {
@@ -494,19 +577,30 @@ void ZenithOutputManager::update_active_output_from_cursor(double x, double y) c
 }
 
 ZenithOutput* ZenithOutputManager::presentation_source_output(ZenithOutput* target_output) const {
-	if (mode_ == multimonitor::MultiMonitorMode::Extend &&
-	    server_->output != nullptr &&
-	    server_->output->swap_chain != nullptr) {
-		return server_->output.get();
+	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
+		ZenithOutput* render_output = current_render_output();
+		if (render_output != nullptr && render_output->swap_chain != nullptr) {
+			return render_output;
+		}
 	}
 	return target_output;
 }
 
 ZenithOutput* ZenithOutputManager::current_render_output() const {
-	if (server_->output != nullptr) {
+	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
+		if (server_->output != nullptr) {
+			return server_->output.get();
+		}
+		if (!server_->outputs.empty()) {
+			return server_->outputs.back().get();
+		}
+		return nullptr;
+	}
+
+	if (server_->output != nullptr && server_->output->swap_chain != nullptr) {
 		return server_->output.get();
 	}
-	if (!server_->outputs.empty()) {
+	if (!server_->outputs.empty() && server_->outputs.back() != nullptr) {
 		return server_->outputs.back().get();
 	}
 	return nullptr;

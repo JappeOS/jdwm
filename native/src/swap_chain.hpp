@@ -14,14 +14,18 @@ extern "C" {
 template<class T>
 struct Slot {
 	explicit Slot(std::shared_ptr<T> buffer);
+	~Slot();
 
 	std::shared_ptr<T> buffer;
 	std::vector<FlutterRect> damage_regions = {};
 	std::atomic<uint32_t> presentation_refs{0};
+	std::atomic<int> ready_fence_fd{-1};
 
 	void acquire_presentation();
 	void release_presentation();
 	[[nodiscard]] bool is_presented() const;
+	void set_ready_fence_fd(int fd);
+	[[nodiscard]] bool is_ready_nonblocking();
 };
 
 template<class T>
@@ -38,7 +42,7 @@ struct SwapChain {
 
 	[[nodiscard]] array_view<FlutterRect> get_damage_regions();
 
-	void end_write(array_view<FlutterRect> damage);
+	void end_write(array_view<FlutterRect> damage, int ready_fence_fd = -1);
 
 	[[nodiscard]] T* start_read();
 	[[nodiscard]] std::shared_ptr<Slot<T>> start_read_slot();

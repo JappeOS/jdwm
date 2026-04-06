@@ -1,7 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 #include "multimonitor/multi_monitor_mode.hpp"
+#include "third_party/embedder.h"
 
 struct ZenithServer;
 struct ZenithOutput;
@@ -29,6 +31,7 @@ public:
 	float pointer_scale_at(double x, double y) const;
 	void schedule_cursor_frame(double x, double y) const;
 	void schedule_compositor_frame() const;
+	void schedule_compositor_frame(const std::vector<FlutterRect>& frame_damage) const;
 	void set_display_enabled(bool enable) const;
 	void refresh_xwayland_workareas() const;
 	void update_active_output_from_cursor(double x, double y) const;

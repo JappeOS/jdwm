@@ -3,11 +3,14 @@
 #include "server.hpp"
 #include "rect.hpp"
 #include "output/zenith_output_manager.hpp"
+#include "util/egl/egl_extensions.hpp"
 
 extern "C" {
 #include <GLES3/gl3.h>
+#include <EGL/eglext.h>
 #include <wlr/render/egl.h>
 #include <wlr/render/gles2.h>
+#include <wlr/util/log.h>
 // Private wlroots headers for wlr_egl_make_current/wlr_egl_unset_current
 #include <render/egl.h>
 }
@@ -16,9 +19,42 @@ extern "C" {
 #include <iostream>
 #include <sys/eventfd.h>
 #include <unistd.h>
+#include <vector>
 
 static ZenithOutput* current_render_output(ZenithServer* server) {
 	return server->output_manager->current_render_output();
+}
+
+static int create_frame_ready_fence_fd() {
+	ZenithServer* server = ZenithServer::instance();
+	if (server == nullptr || server->renderer == nullptr) {
+		return -1;
+	}
+	if (eglCreateSyncKHR == nullptr ||
+	    eglDestroySyncKHR == nullptr ||
+	    eglDupNativeFenceFDANDROID == nullptr) {
+		return -1;
+	}
+
+	wlr_egl* egl = wlr_gles2_renderer_get_egl(server->renderer);
+	if (egl == nullptr) {
+		return -1;
+	}
+
+	EGLDisplay display = wlr_egl_get_display(egl);
+	const EGLint attribs[] = {EGL_NONE};
+	EGLSyncKHR sync = eglCreateSyncKHR(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
+	if (sync == EGL_NO_SYNC_KHR) {
+		return -1;
+	}
+
+	glFlush();
+	int fence_fd = eglDupNativeFenceFDANDROID(display, sync);
+	eglDestroySyncKHR(display, sync);
+	if (fence_fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) {
+		return -1;
+	}
+	return fence_fd;
 }
 
 bool flutter_make_current(void* userdata) {
@@ -49,26 +85,36 @@ GLuint attach_framebuffer() {
 }
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
-	// Wait for the buffer to finish rendering before we commit it to the screen.
-	glFinish();
-
 	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage, present_info->frame_damage.num_rects);
+	int ready_fence_fd = create_frame_ready_fence_fd();
+	if (ready_fence_fd == -1) {
+		static bool logged_sync_fallback = false;
+		if (!logged_sync_fallback) {
+			wlr_log(WLR_INFO, "zenith: missing native fence export, falling back to glFinish in flutter_present");
+			logged_sync_fallback = true;
+		}
+		glFinish();
+	}
 
-	bool success = commit_framebuffer(frame_damage);
+	bool success = commit_framebuffer(frame_damage, ready_fence_fd);
 	return success;
 }
 
-bool commit_framebuffer(array_view<FlutterRect> damage) {
+bool commit_framebuffer(array_view<FlutterRect> damage, int ready_fence_fd) {
 	ZenithServer* server = ZenithServer::instance();
 	ZenithOutput* output = current_render_output(server);
 	if (output == nullptr || output->swap_chain == nullptr) {
+		if (ready_fence_fd != -1) {
+			close(ready_fence_fd);
+		}
 		return false;
 	}
-	output->swap_chain->end_write(damage);
+	output->swap_chain->end_write(damage, ready_fence_fd);
 	// Ensure freshly rendered frames are presented even if no input event
 	// (like pointer motion) occurs to trigger a frame.
-	server->callable_queue.enqueue([server]() {
-		server->output_manager->schedule_compositor_frame();
+	std::vector<FlutterRect> frame_damage(damage.begin(), damage.end());
+	server->callable_queue.enqueue([server, frame_damage = std::move(frame_damage)]() {
+		server->output_manager->schedule_compositor_frame(frame_damage);
 	});
 	return true;
 }

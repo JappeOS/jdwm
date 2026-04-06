@@ -12,6 +12,8 @@
 #include "json_method_codec.h"
 #include "keyboard_helpers.hpp"
 #include "time.hpp"
+#include "multimonitor/multi_monitor_mode.hpp"
+#include "output/zenith_output_manager.hpp"
 
 #include <unordered_map>  // for std::unordered_map
 #include <memory>         // for std::shared_ptr
@@ -157,10 +159,13 @@ void EmbedderState::configure_and_run_engine() {
 	config.open_gl.make_resource_current = flutter_make_resource_current;
 	config.open_gl.fbo_reset_after_present = true;
 	config.open_gl.surface_transformation = flutter_surface_transformation;
-	// Disable partial repaint for now. The current damage bookkeeping between
-	// Flutter FBOs and scene presentation can produce stale regions (especially
-	// visible with BackdropFilter/blur), so force full-frame rasterization.
-	config.open_gl.populate_existing_damage = nullptr;
+	// Safe partial repaint policy:
+	// - Single-output modes can reuse prior damage to reduce raster work.
+	// - Extend mode keeps full-frame rasterization because one shared render
+	//   target is sampled by multiple outputs with different source boxes.
+	const bool extend_mode =
+		ZenithServer::instance()->output_manager->mode() == multimonitor::MultiMonitorMode::Extend;
+	config.open_gl.populate_existing_damage = extend_mode ? nullptr : flutter_populate_existing_damage;
 
 	FlutterTaskRunnerDescription platform_task_runner_description{};
 	platform_task_runner_description.struct_size = sizeof(FlutterTaskRunnerDescription);

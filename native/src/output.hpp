@@ -35,6 +35,10 @@ struct ZenithOutput {
 	wlr_scene_output* scene_output = nullptr;
 	wlr_scene_buffer* scene_buffer = nullptr;
 	wlr_buffer* last_scene_buffer = nullptr;
+	wlr_box last_source_box = {};
+	bool has_last_source_box = false;
+	int last_dest_width = 0;
+	int last_dest_height = 0;
 	int swapchain_width = 0;
 	int swapchain_height = 0;
 

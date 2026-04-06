@@ -2,6 +2,9 @@
 
 #include <memory>
 #include <cassert>
+#include <cerrno>
+#include <poll.h>
+#include <unistd.h>
 
 extern "C" {
 #include <wlr/render/allocator.h>
@@ -12,6 +15,14 @@ extern "C" {
 
 template<class T>
 Slot<T>::Slot(std::shared_ptr<T> buffer) : buffer{buffer} {
+}
+
+template<class T>
+Slot<T>::~Slot() {
+	int fence_fd = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+	if (fence_fd != -1) {
+		close(fence_fd);
+	}
 }
 
 template<class T>
@@ -32,6 +43,44 @@ void Slot<T>::release_presentation() {
 template<class T>
 bool Slot<T>::is_presented() const {
 	return presentation_refs.load(std::memory_order_relaxed) > 0;
+}
+
+template<class T>
+void Slot<T>::set_ready_fence_fd(int fd) {
+	int previous = ready_fence_fd.exchange(fd, std::memory_order_acq_rel);
+	if (previous != -1 && previous != fd) {
+		close(previous);
+	}
+}
+
+template<class T>
+bool Slot<T>::is_ready_nonblocking() {
+	int fence_fd = ready_fence_fd.load(std::memory_order_acquire);
+	if (fence_fd == -1) {
+		return true;
+	}
+
+	pollfd pfd{};
+	pfd.fd = fence_fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+
+	int ret = poll(&pfd, 1, 0);
+	if (ret > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+		int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+		if (consumed != -1) {
+			close(consumed);
+		}
+		return true;
+	}
+	if (ret < 0 && errno != EINTR) {
+		int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+		if (consumed != -1) {
+			close(consumed);
+		}
+		return true;
+	}
+	return false;
 }
 
 template<class T>
@@ -85,12 +134,16 @@ array_view<FlutterRect> SwapChain<T>::get_damage_regions() {
 }
 
 template<class T>
-void SwapChain<T>::end_write(array_view<FlutterRect> damage) {
+void SwapChain<T>::end_write(array_view<FlutterRect> damage, int ready_fence_fd) {
 	std::scoped_lock lock(mutex);
 	if (write_buffer == nullptr) {
+		if (ready_fence_fd != -1) {
+			close(ready_fence_fd);
+		}
 		return;
 	}
 	write_buffer->damage_regions = std::vector(damage.begin(), damage.end());
+	write_buffer->set_ready_fence_fd(ready_fence_fd);
 	latest_buffer = write_buffer;
 }
 

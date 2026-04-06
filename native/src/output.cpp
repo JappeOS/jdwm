@@ -10,6 +10,7 @@
 #include "output/presentation_timing.hpp"
 #include <unistd.h>
 #include <cstdlib>
+#include <vector>
 
 extern "C" {
 #include <libdrm/drm_fourcc.h>
@@ -113,11 +114,57 @@ static void set_scene_buffer_with_damage(
 	if (output->scene_buffer == nullptr) {
 		return;
 	}
-	(void)damage_source;
-	// Force a full scene-buffer update. The current partial-damage propagation
-	// can desynchronize with Flutter's render target history and leave stale
-	// pixels, which is especially visible on blurred widgets.
+	// wlroots 0.19 doesn't expose scene damage import for external buffers in
+	// this path, but we can still skip redundant rebinds when the producer
+	// reports no damage and the underlying buffer object is unchanged.
+	if (damage_source != nullptr &&
+	    output->last_scene_buffer == buffer &&
+	    damage_source->get_damage_regions().size() == 0) {
+		return;
+	}
 	wlr_scene_buffer_set_buffer(output->scene_buffer, buffer);
+}
+
+static bool output_source_box_in_extend_space(
+	ZenithServer* server, ZenithOutput* output, struct wlr_box* source_box_out) {
+	if (server == nullptr ||
+	    output == nullptr ||
+	    output->wlr_output == nullptr ||
+	    server->output_layout == nullptr ||
+	    source_box_out == nullptr) {
+		return false;
+	}
+
+	struct wlr_box extents = {};
+	struct wlr_box box = {};
+	wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
+	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
+
+	source_box_out->x = box.x - extents.x;
+	source_box_out->y = box.y - extents.y;
+	source_box_out->width = box.width;
+	source_box_out->height = box.height;
+	return box.width > 0 && box.height > 0;
+}
+
+static bool damage_intersects_output_source_box(
+	const std::vector<FlutterRect>& damage_regions, const struct wlr_box& output_source_box) {
+	if (damage_regions.empty() || output_source_box.width <= 0 || output_source_box.height <= 0) {
+		return false;
+	}
+
+	const double left = static_cast<double>(output_source_box.x);
+	const double top = static_cast<double>(output_source_box.y);
+	const double right = static_cast<double>(output_source_box.x + output_source_box.width);
+	const double bottom = static_cast<double>(output_source_box.y + output_source_box.height);
+
+	for (const auto& rect : damage_regions) {
+		if (rect.right <= left || rect.left >= right || rect.bottom <= top || rect.top >= bottom) {
+			continue;
+		}
+		return true;
+	}
+	return false;
 }
 
 static void release_presented_slot(ZenithOutput* output) {
@@ -146,6 +193,51 @@ static void free_drm_format(struct wlr_drm_format* format) {
 	}
 	free(format->modifiers);
 	free(format);
+}
+
+static void notify_legacy_clients_frame_done(ZenithServer* server) {
+	if (server == nullptr) {
+		return;
+	}
+
+	timespec frame_done_now{};
+	clock_gettime(CLOCK_MONOTONIC, &frame_done_now);
+	for (auto& [id, view]: server->xdg_toplevels) {
+		(void)id;
+		wlr_xdg_surface* xdg_surface = view->xdg_toplevel->base;
+		if (!xdg_surface->surface->mapped || !view->visible()) {
+			continue;
+		}
+
+		wlr_xdg_surface_for_each_surface(
+			xdg_surface,
+			[](struct wlr_surface* surface, int sx, int sy, void* data) {
+				(void)sx;
+				(void)sy;
+				auto* now = static_cast<timespec*>(data);
+				wlr_surface_send_frame_done(surface, now);
+			},
+			&frame_done_now
+		);
+	}
+
+	for (auto& [id, view]: server->xwayland_toplevels) {
+		(void)id;
+		wlr_surface* surface = view->xwayland_surface->surface;
+		if (surface == nullptr || !surface->mapped || !view->visible()) {
+			continue;
+		}
+		wlr_surface_for_each_surface(
+			surface,
+			[](struct wlr_surface* child, int sx, int sy, void* data) {
+				(void)sx;
+				(void)sy;
+				auto* now = static_cast<timespec*>(data);
+				wlr_surface_send_frame_done(child, now);
+			},
+			&frame_done_now
+		);
+	}
 }
 
 void output_create_handle(wl_listener* listener, void* data) {
@@ -185,79 +277,89 @@ void output_frame(wl_listener* listener, void* data) {
 	}
 
 	ZenithOutput* vsync_output = server->output_manager->vsync_driver_output();
-	if (output == vsync_output) {
-		timespec frame_done_now{};
-		clock_gettime(CLOCK_MONOTONIC, &frame_done_now);
-		for (auto& [id, view]: server->xdg_toplevels) {
-			(void)id;
-			wlr_xdg_surface* xdg_surface = view->xdg_toplevel->base;
-			if (!xdg_surface->surface->mapped || !view->visible()) {
-				continue;
-			}
-
-			wlr_xdg_surface_for_each_surface(
-				xdg_surface,
-				[](struct wlr_surface* surface, int sx, int sy, void* data) {
-					(void)sx;
-					(void)sy;
-					auto* now = static_cast<timespec*>(data);
-					wlr_surface_send_frame_done(surface, now);
-				},
-				&frame_done_now
-			);
-		}
-
-		for (auto& [id, view]: server->xwayland_toplevels) {
-			(void)id;
-			wlr_surface* surface = view->xwayland_surface->surface;
-			if (surface == nullptr || !surface->mapped || !view->visible()) {
-				continue;
-			}
-			wlr_surface_for_each_surface(
-				surface,
-				[](struct wlr_surface* child, int sx, int sy, void* data) {
-					(void)sx;
-					(void)sy;
-					auto* now = static_cast<timespec*>(data);
-					wlr_surface_send_frame_done(child, now);
-				},
-				&frame_done_now
-			);
-		}
-
-		vsync_callback(server, output->wlr_output);
-	}
+	const bool is_vsync_driver = (output == vsync_output);
 
 	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_output->swap_chain->start_read_slot();
 	if (source_slot == nullptr || source_slot->buffer == nullptr) {
+		// Bootstrap: if we have no composed frame yet, still service one vsync
+		// tick so Flutter can produce the first frame.
+		if (is_vsync_driver) {
+			vsync_callback(server, output->wlr_output);
+		}
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
+	if (!source_slot->is_ready_nonblocking()) {
+		// Back-pressure: don't request a new Flutter frame until the latest
+		// composed frame is actually ready for scanout.
+		wl_event_source_timer_update(output->schedule_frame_timer, 4);
+		return;
+	}
 	wlr_gles2_buffer* source_buffer = source_slot->buffer.get();
+	const bool extend_mode = server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend;
+	const auto& frame_damage = source_slot->damage_regions;
 
 	wlr_buffer* source_wlr_buffer = source_buffer->buffer;
-	if (server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
-		// In extended desktop mode, each output samples a cropped source box from
-		// one shared framebuffer. Reusing partial damage here can miss updates on
-		// the second monitor due to coordinate-space mismatch, causing trails.
-		wlr_scene_buffer_set_buffer(output->scene_buffer, source_wlr_buffer);
+	struct wlr_box source_box_i = {};
+	struct wlr_fbox source_box_f = {};
+	const bool have_source_box = extend_mode && output_source_box_in_extend_space(server, output, &source_box_i);
+	if (have_source_box) {
+		source_box_f = {
+			.x = static_cast<double>(source_box_i.x),
+			.y = static_cast<double>(source_box_i.y),
+			.width = static_cast<double>(source_box_i.width),
+			.height = static_cast<double>(source_box_i.height),
+		};
+	}
+
+	bool source_mapping_changed = false;
+	if (extend_mode && have_source_box) {
+		source_mapping_changed =
+			!output->has_last_source_box ||
+			output->last_source_box.x != source_box_i.x ||
+			output->last_source_box.y != source_box_i.y ||
+			output->last_source_box.width != source_box_i.width ||
+			output->last_source_box.height != source_box_i.height ||
+			output->last_dest_width != source_box_i.width ||
+			output->last_dest_height != source_box_i.height;
+	}
+
+	bool output_region_damaged = true;
+	if (extend_mode && have_source_box && !frame_damage.empty()) {
+		output_region_damaged = damage_intersects_output_source_box(frame_damage, source_box_i);
+	}
+
+	if (extend_mode) {
+		const bool force_present =
+			!have_source_box ||
+			output->last_scene_buffer == nullptr ||
+			source_mapping_changed ||
+			software_cursor_active(output->wlr_output);
+		if (!force_present && !output_region_damaged) {
+			if (is_vsync_driver) {
+				notify_legacy_clients_frame_done(server);
+				vsync_callback(server, output->wlr_output);
+			}
+			return;
+		}
+	}
+
+	if (extend_mode) {
+		if (source_wlr_buffer != output->last_scene_buffer || output_region_damaged || source_mapping_changed) {
+			wlr_scene_buffer_set_buffer(output->scene_buffer, source_wlr_buffer);
+		}
 	} else {
 		set_scene_buffer_with_damage(output, source_wlr_buffer, source_output->swap_chain.get());
 	}
 
-	if (server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
-		struct wlr_box extents = {};
-		struct wlr_box box = {};
-		wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
-		wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
-		struct wlr_fbox source_box = {
-			.x = (double) (box.x - extents.x),
-			.y = (double) (box.y - extents.y),
-			.width = (double) box.width,
-			.height = (double) box.height,
-		};
-		wlr_scene_buffer_set_source_box(output->scene_buffer, &source_box);
-		wlr_scene_buffer_set_dest_size(output->scene_buffer, box.width, box.height);
+	if (extend_mode) {
+		if (have_source_box) {
+			wlr_scene_buffer_set_source_box(output->scene_buffer, &source_box_f);
+			wlr_scene_buffer_set_dest_size(output->scene_buffer, source_box_i.width, source_box_i.height);
+		} else {
+			wlr_scene_buffer_set_source_box(output->scene_buffer, nullptr);
+			wlr_scene_buffer_set_dest_size(output->scene_buffer, 0, 0);
+		}
 	} else {
 		wlr_scene_buffer_set_source_box(output->scene_buffer, nullptr);
 		wlr_scene_buffer_set_dest_size(output->scene_buffer, 0, 0);
@@ -272,12 +374,27 @@ void output_frame(wl_listener* listener, void* data) {
 		return;
 	}
 	output->last_scene_buffer = source_wlr_buffer;
+	if (extend_mode && have_source_box) {
+		output->last_source_box = source_box_i;
+		output->has_last_source_box = true;
+		output->last_dest_width = source_box_i.width;
+		output->last_dest_height = source_box_i.height;
+	} else if (!extend_mode) {
+		output->has_last_source_box = false;
+		output->last_dest_width = 0;
+		output->last_dest_height = 0;
+	}
 	swap_presented_slot(output, source_slot);
 
 	// Notify scene-managed surfaces that this output frame has been presented.
 	timespec now{};
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(output->scene_output, &now);
+
+	if (is_vsync_driver) {
+		notify_legacy_clients_frame_done(server);
+		vsync_callback(server, output->wlr_output);
+	}
 }
 
 void output_request_state(wl_listener* listener, void* data) {
@@ -413,6 +530,9 @@ void output_destroy(wl_listener* listener, void* data) {
 		output->scene_output = nullptr;
 	}
 	output->last_scene_buffer = nullptr;
+	output->has_last_source_box = false;
+	output->last_dest_width = 0;
+	output->last_dest_height = 0;
 	release_presented_slot(output);
 
 	server->output_manager->handle_output_removed(output);
@@ -502,6 +622,9 @@ void ZenithOutput::recreate_swapchain(int width, int height) {
 	swapchain_width = width;
 	swapchain_height = height;
 	last_scene_buffer = nullptr;
+	has_last_source_box = false;
+	last_dest_width = 0;
+	last_dest_height = 0;
 	if (scene_buffer != nullptr) {
 		wlr_scene_buffer_set_buffer(scene_buffer, nullptr);
 	}
