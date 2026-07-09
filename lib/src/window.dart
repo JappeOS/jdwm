@@ -678,11 +678,14 @@ class _WindowState extends State<Window> {
   }) {
     // SSD windows always use the same container type, avoiding gesture breaks
     // when toggling docked/maximized states.
+    final theme = Theme.of(context);
     return DualBorderOutlinedContainer(
       key: _mainContainerKey,
       hasBorder: hasBorder,
       borderRadius:
-          hasBorder ? Theme.of(context).borderRadiusLg : BorderRadius.zero,
+          hasBorder ? theme.borderRadiusLg : BorderRadius.zero,
+      surfaceBlur: theme.surfaceBlur,
+      surfaceOpacity: theme.surfaceOpacity,
       boxShadow: hasBorder && isFocused
           ? [
               BoxShadow(
