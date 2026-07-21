@@ -8,6 +8,7 @@
 #include "util/wlr/xdg_surface_get_visible_bounds.hpp"
 #include "util/wlr/scoped_wlr_buffer.hpp"
 #include "util/egl/egl_extensions.hpp"
+#include "util/egl/gl_context_lock.hpp"
 #include <EGL/eglext.h>
 
 extern "C" {
@@ -237,6 +238,7 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 				EGLDisplay egl_display = wlr_egl_get_display(egl);
 				scoped_buffer = scoped_wlr_buffer(buffer, [fence_fd, egl_display, sync](
 					  wlr_buffer* buffer) {
+					zenith::egl::GlContextGuard gl_guard;
 					eglDestroySyncKHR(egl_display, sync);
 					close(fence_fd);
 				});
@@ -326,6 +328,7 @@ int extract_fd_from_native_fence(EGLSyncKHR* sync_out) {
 		  EGL_NONE,
 	};
 
+	zenith::egl::GlContextGuard gl_guard;
 	wlr_egl* egl = wlr_gles2_renderer_get_egl(ZenithServer::instance()->renderer);
 	wlr_egl_make_current(egl, NULL);
 

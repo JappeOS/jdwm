@@ -1,4 +1,5 @@
 #include "wlr_helpers.hpp"
+#include "util/egl/gl_context_lock.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -145,6 +146,7 @@ struct wlr_drm_format* wlr_drm_format_dup(const struct wlr_drm_format* format) {
 
 
 static void destroy_buffer(struct wlr_gles2_buffer* buffer) {
+	zenith::egl::GlContextGuard gl_guard;
 	wl_list_remove(&buffer->link);
 	wlr_addon_finish(&buffer->addon);
 
@@ -173,6 +175,7 @@ static const struct wlr_addon_interface buffer_addon_impl = {
 };
 
 struct wlr_gles2_buffer* create_buffer(struct wlr_gles2_renderer* renderer, struct wlr_buffer* wlr_buffer) {
+	zenith::egl::GlContextGuard gl_guard;
 	wlr_gles2_buffer* buffer = static_cast<wlr_gles2_buffer*>(calloc(1, sizeof(*buffer)));
 	if (buffer == nullptr) {
 		wlr_log_errno(WLR_ERROR, "Allocation failed");

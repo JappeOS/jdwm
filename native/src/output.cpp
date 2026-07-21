@@ -9,6 +9,7 @@
 #include "output/zenith_output_manager.hpp"
 #include "output/rendering_policy.hpp"
 #include "output/presentation_timing.hpp"
+#include "util/egl/gl_context_lock.hpp"
 #include <unistd.h>
 #include <cstdlib>
 #include <cinttypes>
@@ -445,7 +446,12 @@ void output_frame(wl_listener* listener, void* data) {
 		wlr_scene_buffer_set_dest_size(output->scene_buffer, 0, 0);
 	}
 
-	if (!wlr_scene_output_commit(output->scene_output, nullptr)) {
+	bool output_committed = false;
+	{
+		zenith::egl::GlContextGuard gl_guard;
+		output_committed = wlr_scene_output_commit(output->scene_output, nullptr);
+	}
+	if (!output_committed) {
 		// If committing fails for some reason, manually schedule a new frame, otherwise rendering stops completely.
 		// After 1 ms because if we do it right away, it will saturate the event loop and no other
 		// tasks will execute.
@@ -544,6 +550,7 @@ std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 	wlr_output* wlr_output, int width_override, int height_override) {
 	ZenithServer* server = ZenithServer::instance();
 
+	zenith::egl::GlContextGuard gl_guard;
 	wlr_egl_make_current(wlr_gles2_renderer_get_egl(server->renderer), NULL);
 
 	const size_t buffer_count = zenith::render::desired_swapchain_buffer_count(server);

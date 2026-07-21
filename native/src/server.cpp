@@ -2,6 +2,7 @@
 #include "debug.hpp"
 #include "assert.hpp"
 #include "util/egl/egl_extensions.hpp"
+#include "util/egl/gl_context_lock.hpp"
 #include "egl/create_shared_egl_context.hpp"
 #include "zenith_toplevel_decoration.hpp"
 #include "multimonitor/multi_monitor_mode.hpp"
@@ -491,10 +492,12 @@ ZenithServer::ZenithServer() {
 void ZenithServer::run(const char* startup_command) {
 	this->startup_command = startup_command;
 
-	wlr_egl_make_current(wlr_gles2_renderer_get_egl(renderer), NULL);
-
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	{
+		zenith::egl::GlContextGuard gl_guard;
+		wlr_egl_make_current(wlr_gles2_renderer_get_egl(renderer), NULL);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	}
 
 	const char* socket = wl_display_add_socket_auto(display);
 	if (!socket) {
