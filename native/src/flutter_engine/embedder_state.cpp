@@ -15,6 +15,7 @@
 #include "multimonitor/multi_monitor_mode.hpp"
 #include "output/zenith_output_manager.hpp"
 
+#include <atomic>
 #include <unordered_map>  // for std::unordered_map
 #include <memory>         // for std::shared_ptr
 #include <vector>         // if you use std::vector anywhere
@@ -32,6 +33,10 @@ extern "C" {
 }
 
 namespace {
+
+bool zenith_log_first_n(std::atomic<int>& counter, int limit) {
+	return counter.fetch_add(1, std::memory_order_relaxed) < limit;
+}
 
 std::optional<uint64_t> flutter_specified_logical_key(xkb_keysym_t keysym, xkb_keycode_t scan_code) {
 	// Linux evdev LEFTMETA/RIGHTMETA (keycodes 125/126, plus xkb +8 offset) are
@@ -111,6 +116,7 @@ EmbedderState::EmbedderState(wlr_egl* flutter_gl_context, wlr_egl* flutter_resou
 
 void EmbedderState::run_engine() {
 	embedder_thread = std::thread([this]() {
+		wlr_log(WLR_INFO, "zenith:flutter embedder thread starting");
 		auto callable_queue_fn = [](int fd, uint32_t mask, void* data) {
 			auto* queue = static_cast<CallableQueue*>(data);
 			return (int) queue->execute();
@@ -118,6 +124,7 @@ void EmbedderState::run_engine() {
 
 		wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE, callable_queue_fn,
 		                     &callable_queue);
+		wlr_log(WLR_INFO, "zenith:flutter embedder event loop ready");
 
 		while (true) {
 			wl_event_loop_dispatch(event_loop, -1);
@@ -125,6 +132,7 @@ void EmbedderState::run_engine() {
 	});
 
 	callable_queue.enqueue([this] {
+		wlr_log(WLR_INFO, "zenith:flutter configure_and_run_engine queued task begin");
 		configure_and_run_engine();
 
 		platform_task_runner.set_engine(engine);
@@ -141,6 +149,7 @@ void EmbedderState::run_engine() {
 		                     }, this);
 
 		register_platform_api();
+		wlr_log(WLR_INFO, "zenith:flutter configure_and_run_engine queued task end");
 	});
 }
 
@@ -222,11 +231,14 @@ void EmbedderState::configure_and_run_engine() {
 	args.aot_data = aot_data;
 #endif
 
+	wlr_log(WLR_INFO, "zenith:flutter FlutterEngineRun begin");
 	int result = FlutterEngineRun(FLUTTER_ENGINE_VERSION, &config, &args, this, &engine);
+	wlr_log(WLR_INFO, "zenith:flutter FlutterEngineRun end result=%d engine=%p", result, engine);
 	assert(result == kSuccess && engine != nullptr);
 }
 
 void EmbedderState::register_platform_api() {
+	wlr_log(WLR_INFO, "zenith:flutter register_platform_api begin");
 	messenger.SetEngine(engine);
 
 	key_event_channel = std::make_unique<flutter::BasicMessageChannel<rapidjson::Document>>(
@@ -390,17 +402,55 @@ void EmbedderState::register_platform_api() {
 			  result->Success();
 		  }
 	);
+	wlr_log(WLR_INFO, "zenith:flutter register_platform_api end");
 }
 
 void EmbedderState::send_window_metrics(FlutterWindowMetricsEvent metrics) {
+	static std::atomic<int> enqueue_logs{0};
+	if (zenith_log_first_n(enqueue_logs, 10)) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter enqueue window_metrics width=%zu height=%zu scale=%f",
+			metrics.width,
+			metrics.height,
+			metrics.pixel_ratio
+		);
+	}
 	callable_queue.enqueue([this, metrics] {
+		static std::atomic<int> send_logs{0};
+		if (zenith_log_first_n(send_logs, 10)) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:flutter send window_metrics width=%zu height=%zu scale=%f engine=%p",
+				metrics.width,
+				metrics.height,
+				metrics.pixel_ratio,
+				engine
+			);
+		}
 		FlutterEngineSendWindowMetricsEvent(engine, &metrics);
 	});
 }
 
 void
 EmbedderState::on_vsync(intptr_t baton, uint64_t frame_start_time_nanos, uint64_t frame_target_time_nanos) {
+	static std::atomic<int> enqueue_logs{0};
+	if (zenith_log_first_n(enqueue_logs, 30)) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter enqueue on_vsync baton=%lld",
+			static_cast<long long>(baton)
+		);
+	}
 	callable_queue.enqueue([=] {
+		static std::atomic<int> send_logs{0};
+		if (zenith_log_first_n(send_logs, 30)) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:flutter send on_vsync baton=%lld",
+				static_cast<long long>(baton)
+			);
+		}
 		FlutterEngineOnVsync(engine, baton, frame_start_time_nanos, frame_target_time_nanos);
 	});
 }
@@ -518,6 +568,10 @@ std::optional<intptr_t> EmbedderState::get_baton() {
 }
 
 void EmbedderState::set_baton(intptr_t p_baton) {
+	static std::atomic<int> logs{0};
+	if (zenith_log_first_n(logs, 30)) {
+		wlr_log(WLR_INFO, "zenith:flutter set_baton baton=%lld", static_cast<long long>(p_baton));
+	}
 	std::scoped_lock lock(baton_mutex);
 	baton = p_baton;
 	new_baton = true;

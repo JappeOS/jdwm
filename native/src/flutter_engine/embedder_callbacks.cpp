@@ -17,12 +17,17 @@ extern "C" {
 }
 
 #include <cassert>
+#include <atomic>
 #include <iostream>
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <vector>
 
 static thread_local int flutter_gl_lock_depth = 0;
+
+static bool zenith_log_first_n(std::atomic<int>& counter, int limit) {
+	return counter.fetch_add(1, std::memory_order_relaxed) < limit;
+}
 
 class FlutterGlLockReleaseForBlockingCall {
 public:
@@ -91,8 +96,22 @@ static int create_frame_ready_fence_fd() {
 }
 
 bool flutter_make_current(void* userdata) {
+	static std::atomic<int> begin_logs{0};
+	bool log_this_call = zenith_log_first_n(begin_logs, 20);
+	if (log_this_call) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter make_current begin serialized=%d depth=%d",
+			zenith::egl::gl_context_serialization_enabled() ? 1 : 0,
+			flutter_gl_lock_depth
+		);
+	}
+
 	auto* state = static_cast<EmbedderState*>(userdata);
 	if (state == nullptr || state->flutter_gl_context == nullptr) {
+		if (log_this_call) {
+			wlr_log(WLR_INFO, "zenith:flutter make_current missing context");
+		}
 		return false;
 	}
 
@@ -101,18 +120,38 @@ bool flutter_make_current(void* userdata) {
 		if (locked_gl_context) {
 			zenith::egl::unlock_gl_context();
 		}
+		if (log_this_call) {
+			wlr_log(WLR_INFO, "zenith:flutter make_current failed");
+		}
 		return false;
 	}
 
 	if (locked_gl_context) {
 		++flutter_gl_lock_depth;
 	}
+	if (log_this_call) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter make_current success locked=%d depth=%d",
+			locked_gl_context ? 1 : 0,
+			flutter_gl_lock_depth
+		);
+	}
 	return true;
 }
 
 bool flutter_clear_current(void* userdata) {
+	static std::atomic<int> logs{0};
+	bool log_this_call = zenith_log_first_n(logs, 20);
+	if (log_this_call) {
+		wlr_log(WLR_INFO, "zenith:flutter clear_current begin depth=%d", flutter_gl_lock_depth);
+	}
+
 	auto* state = static_cast<EmbedderState*>(userdata);
 	if (state == nullptr || state->flutter_gl_context == nullptr) {
+		if (log_this_call) {
+			wlr_log(WLR_INFO, "zenith:flutter clear_current missing context");
+		}
 		return false;
 	}
 
@@ -121,11 +160,24 @@ bool flutter_clear_current(void* userdata) {
 		--flutter_gl_lock_depth;
 		zenith::egl::unlock_gl_context();
 	}
+	if (log_this_call) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter clear_current end success=%d depth=%d",
+			success ? 1 : 0,
+			flutter_gl_lock_depth
+		);
+	}
 	return success;
 }
 
 uint32_t flutter_fbo_callback(void* userdata) {
-	return attach_framebuffer();
+	GLuint fbo = attach_framebuffer();
+	static std::atomic<int> logs{0};
+	if (zenith_log_first_n(logs, 20)) {
+		wlr_log(WLR_INFO, "zenith:flutter fbo_callback fbo=%u", fbo);
+	}
+	return fbo;
 }
 
 GLuint attach_framebuffer() {
@@ -143,6 +195,16 @@ GLuint attach_framebuffer() {
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage, present_info->frame_damage.num_rects);
+	static std::atomic<int> present_logs{0};
+	bool log_this_present = zenith_log_first_n(present_logs, 20);
+	if (log_this_present) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter present begin damage=%zu serialized=%d",
+			frame_damage.size(),
+			zenith::egl::gl_context_serialization_enabled() ? 1 : 0
+		);
+	}
 	int ready_fence_fd = create_frame_ready_fence_fd();
 	if (ready_fence_fd == -1) {
 		static bool logged_sync_fallback = false;
@@ -154,6 +216,9 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 	}
 
 	bool success = commit_framebuffer(frame_damage, ready_fence_fd);
+	if (log_this_present) {
+		wlr_log(WLR_INFO, "zenith:flutter present end success=%d", success ? 1 : 0);
+	}
 	return success;
 }
 
@@ -177,6 +242,10 @@ bool commit_framebuffer(array_view<FlutterRect> damage, int ready_fence_fd) {
 }
 
 void flutter_vsync_callback(void* userdata, intptr_t baton) {
+	static std::atomic<int> logs{0};
+	if (zenith_log_first_n(logs, 30)) {
+		wlr_log(WLR_INFO, "zenith:flutter vsync_request baton=%lld", static_cast<long long>(baton));
+	}
 	auto* state = static_cast<EmbedderState*>(userdata);
 	state->set_baton(baton);
 	auto* server = ZenithServer::instance();
@@ -276,11 +345,23 @@ void flutter_platform_message_callback(const FlutterPlatformMessage* message, vo
 }
 
 bool flutter_make_resource_current(void* userdata) {
+	static std::atomic<int> logs{0};
+	bool log_this_call = zenith_log_first_n(logs, 10);
+	if (log_this_call) {
+		wlr_log(WLR_INFO, "zenith:flutter make_resource_current begin");
+	}
 	auto* state = static_cast<EmbedderState*>(userdata);
 	if (state == nullptr || state->flutter_resource_gl_context == nullptr) {
+		if (log_this_call) {
+			wlr_log(WLR_INFO, "zenith:flutter make_resource_current missing context");
+		}
 		return false;
 	}
-	return wlr_egl_make_current(state->flutter_resource_gl_context, NULL);
+	bool success = wlr_egl_make_current(state->flutter_resource_gl_context, NULL);
+	if (log_this_call) {
+		wlr_log(WLR_INFO, "zenith:flutter make_resource_current end success=%d", success ? 1 : 0);
+	}
+	return success;
 }
 
 /*
@@ -293,6 +374,10 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 		server != nullptr
 			? server->composition_source_height_cache.load(std::memory_order_acquire)
 			: 0;
+	static std::atomic<int> logs{0};
+	if (zenith_log_first_n(logs, 10)) {
+		wlr_log(WLR_INFO, "zenith:flutter surface_transformation height=%.0f", height);
+	}
 
 	return FlutterTransformation{
 		  1.0, 0.0, 0.0, 0.0, -1.0, height, 0.0, 0.0, 1.0,

@@ -11,6 +11,7 @@
 #include "output/presentation_timing.hpp"
 #include "util/egl/gl_context_lock.hpp"
 #include <unistd.h>
+#include <atomic>
 #include <cstdlib>
 #include <cinttypes>
 #include <vector>
@@ -54,6 +55,10 @@ ZenithOutput::ZenithOutput(struct wlr_output* wlr_output)
 
 	scene_output = wlr_scene_output_create(server->scene, wlr_output);
 	scene_buffer = wlr_scene_buffer_create(&server->scene->tree, nullptr);
+}
+
+static bool zenith_output_log_first_n(std::atomic<int>& counter, int limit) {
+	return counter.fetch_add(1, std::memory_order_relaxed) < limit;
 }
 
 static bool software_cursor_active(wlr_output* wlr_output) {
@@ -310,12 +315,25 @@ void output_frame(wl_listener* listener, void* data) {
 	(void)data;
 	ZenithOutput* output = wl_container_of(listener, output, frame_listener);
 	auto* server = ZenithServer::instance();
+	static std::atomic<int> frame_logs{0};
+	bool log_this_frame = zenith_output_log_first_n(frame_logs, 50);
+	if (log_this_frame) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:output frame begin output='%s' embedder=%d",
+			output->wlr_output != nullptr ? output->wlr_output->name : "<null>",
+			(server != nullptr && server->embedder_state != nullptr) ? 1 : 0
+		);
+	}
 
 	log_cursor_mode_transition(output);
 
 	SwapChain<wlr_gles2_buffer>* source_swap_chain =
 		server->output_manager->composition_source_swap_chain();
 	if (source_swap_chain == nullptr || output->scene_output == nullptr || output->scene_buffer == nullptr) {
+		if (log_this_frame) {
+			wlr_log(WLR_INFO, "zenith:output frame missing source swapchain or scene objects");
+		}
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
@@ -327,6 +345,9 @@ void output_frame(wl_listener* listener, void* data) {
 	if (source_slot == nullptr || source_slot->buffer == nullptr) {
 		// Bootstrap: if we have no composed frame yet, still service one vsync
 		// tick so Flutter can produce the first frame.
+		if (log_this_frame) {
+			wlr_log(WLR_INFO, "zenith:output frame no source slot is_driver=%d", is_vsync_driver ? 1 : 0);
+		}
 		if (is_vsync_driver) {
 			vsync_callback(server, output->wlr_output);
 		}
@@ -450,6 +471,9 @@ void output_frame(wl_listener* listener, void* data) {
 	{
 		zenith::egl::TryGlContextGuard gl_guard;
 		if (!gl_guard.owns_lock()) {
+			if (log_this_frame) {
+				wlr_log(WLR_INFO, "zenith:output frame skipped: GL serialization busy");
+			}
 			wl_event_source_timer_update(output->schedule_frame_timer, 1);
 			return;
 		}
@@ -462,6 +486,14 @@ void output_frame(wl_listener* listener, void* data) {
 		std::cerr << "commit failed" << std::endl;
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
+	}
+	if (log_this_frame) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:output frame committed serial=%llu is_driver=%d",
+			static_cast<unsigned long long>(source_frame_serial),
+			is_vsync_driver ? 1 : 0
+		);
 	}
 	output->last_scene_buffer = source_wlr_buffer;
 	output->cursor_frame_pending = false;
@@ -543,9 +575,22 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 	 */
 	std::optional<intptr_t> baton = embedder_state->get_baton();
 	if (baton.has_value()) {
+		static std::atomic<int> baton_logs{0};
+		if (zenith_output_log_first_n(baton_logs, 50)) {
+			wlr_log(
+				WLR_INFO,
+				"zenith:output delivering vsync baton=%lld",
+				static_cast<long long>(*baton)
+			);
+		}
 		uint64_t now = FlutterEngineGetCurrentTime();
 		uint64_t next_frame = zenith::render::next_presentation_time_ns(now, timing_output);
 		embedder_state->on_vsync(*baton, now, next_frame);
+	} else {
+		static std::atomic<int> no_baton_logs{0};
+		if (zenith_output_log_first_n(no_baton_logs, 30)) {
+			wlr_log(WLR_INFO, "zenith:output vsync_callback no baton");
+		}
 	}
 	return 0;
 }
