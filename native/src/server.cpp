@@ -53,6 +53,7 @@ static void zenith_maybe_default_libseat_backend();
 static void zenith_preflight_libseat();
 static void zenith_debug_log_loaded_libs();
 static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode);
+static void zenith_maybe_allow_software_renderer();
 
 static bool path_exists(const char* path) {
 	return path != nullptr && access(path, F_OK) == 0;
@@ -113,6 +114,28 @@ static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode) 
 	}
 
 	(void)mode;
+}
+
+static void zenith_maybe_allow_software_renderer() {
+	if (std::getenv("WLR_RENDERER_ALLOW_SOFTWARE") != nullptr) {
+		return;
+	}
+	if (env_is_truthy(std::getenv("ZENITH_DISABLE_SOFTWARE_RENDERER"))) {
+		wlr_log(
+			WLR_INFO,
+			"zenith: leaving WLR_RENDERER_ALLOW_SOFTWARE unset (ZENITH_DISABLE_SOFTWARE_RENDERER)"
+		);
+		return;
+	}
+
+	// The Flutter embedder path requires an EGL/GLES renderer. In VMs,
+	// wlroots otherwise rejects llvmpipe, falls through to pixman, and our
+	// GLES setup would hit wlroots' renderer-type assertion.
+	setenv("WLR_RENDERER_ALLOW_SOFTWARE", "1", 0);
+	wlr_log(
+		WLR_INFO,
+		"zenith: allowing wlroots software GLES renderer fallback (WLR_RENDERER_ALLOW_SOFTWARE=1)"
+	);
 }
 
 static void zenith_maybe_default_libseat_backend() {
@@ -255,6 +278,7 @@ ZenithServer::ZenithServer() {
 	output_manager = std::make_unique<zenith::ZenithOutputManager>(this, multi_monitor_mode);
 	wlr_log(WLR_INFO, "zenith: multi-monitor mode=%s", multimonitor::to_string(multi_monitor_mode));
 	zenith_configure_drm_stability(multi_monitor_mode);
+	zenith_maybe_allow_software_renderer();
 
 	display = wl_display_create();
 	if (display == nullptr) {
@@ -296,6 +320,15 @@ ZenithServer::ZenithServer() {
 		wlr_log(WLR_ERROR,
 		        "Could not create wlroots renderer (EGL/GLES2 init failed). "
 		        "Check your EGL/GBM/Mesa setup, or build wlroots with a software renderer fallback.");
+		exit(3);
+	}
+	if (!wlr_renderer_is_gles2(renderer)) {
+		wlr_log(
+			WLR_ERROR,
+			"Zenith requires a wlroots GLES2 renderer for the Flutter embedder, "
+			"but wlroots selected a non-GLES renderer. "
+			"Check EGL/GBM/Mesa setup and WLR_RENDERER_ALLOW_SOFTWARE."
+		);
 		exit(3);
 	}
 	if (!wlr_renderer_init_wl_display(renderer, display)) {
