@@ -9,12 +9,25 @@ static std::atomic_bool& gl_context_serialization_enabled_state() {
 	return enabled;
 }
 
+static std::atomic_bool& flutter_frame_rendering_active_state() {
+	static std::atomic_bool active{false};
+	return active;
+}
+
 void set_gl_context_serialization_enabled(bool enabled) {
 	gl_context_serialization_enabled_state().store(enabled);
 }
 
 bool gl_context_serialization_enabled() {
 	return gl_context_serialization_enabled_state().load();
+}
+
+void set_flutter_frame_rendering_active(bool active) {
+	flutter_frame_rendering_active_state().store(active, std::memory_order_release);
+}
+
+bool flutter_frame_rendering_active() {
+	return flutter_frame_rendering_active_state().load(std::memory_order_acquire);
 }
 
 std::recursive_mutex& gl_context_mutex() {

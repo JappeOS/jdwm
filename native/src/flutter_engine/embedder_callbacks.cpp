@@ -101,9 +101,9 @@ bool flutter_make_current(void* userdata) {
 	if (log_this_call) {
 		wlr_log(
 			WLR_INFO,
-			"zenith:flutter make_current begin serialized=%d depth=%d",
+			"zenith:flutter make_current begin serialized=%d active_frame=%d",
 			zenith::egl::gl_context_serialization_enabled() ? 1 : 0,
-			flutter_gl_lock_depth
+			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
 		);
 	}
 
@@ -115,27 +115,15 @@ bool flutter_make_current(void* userdata) {
 		return false;
 	}
 
-	bool locked_gl_context = zenith::egl::lock_gl_context();
 	if (!wlr_egl_make_current(state->flutter_gl_context, NULL)) {
-		if (locked_gl_context) {
-			zenith::egl::unlock_gl_context();
-		}
 		if (log_this_call) {
 			wlr_log(WLR_INFO, "zenith:flutter make_current failed");
 		}
 		return false;
 	}
 
-	if (locked_gl_context) {
-		++flutter_gl_lock_depth;
-	}
 	if (log_this_call) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:flutter make_current success locked=%d depth=%d",
-			locked_gl_context ? 1 : 0,
-			flutter_gl_lock_depth
-		);
+		wlr_log(WLR_INFO, "zenith:flutter make_current success");
 	}
 	return true;
 }
@@ -156,16 +144,13 @@ bool flutter_clear_current(void* userdata) {
 	}
 
 	bool success = wlr_egl_unset_current(state->flutter_gl_context);
-	if (flutter_gl_lock_depth > 0) {
-		--flutter_gl_lock_depth;
-		zenith::egl::unlock_gl_context();
-	}
+	zenith::egl::set_flutter_frame_rendering_active(false);
 	if (log_this_call) {
 		wlr_log(
 			WLR_INFO,
-			"zenith:flutter clear_current end success=%d depth=%d",
+			"zenith:flutter clear_current end success=%d active_frame=%d",
 			success ? 1 : 0,
-			flutter_gl_lock_depth
+			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
 		);
 	}
 	return success;
@@ -173,9 +158,17 @@ bool flutter_clear_current(void* userdata) {
 
 uint32_t flutter_fbo_callback(void* userdata) {
 	GLuint fbo = attach_framebuffer();
+	zenith::egl::set_flutter_frame_rendering_active(
+		zenith::egl::gl_context_serialization_enabled() && fbo != 0
+	);
 	static std::atomic<int> logs{0};
 	if (zenith_log_first_n(logs, 20)) {
-		wlr_log(WLR_INFO, "zenith:flutter fbo_callback fbo=%u", fbo);
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter fbo_callback fbo=%u active_frame=%d",
+			fbo,
+			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
+		);
 	}
 	return fbo;
 }
@@ -216,8 +209,14 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 	}
 
 	bool success = commit_framebuffer(frame_damage, ready_fence_fd);
+	zenith::egl::set_flutter_frame_rendering_active(false);
 	if (log_this_present) {
-		wlr_log(WLR_INFO, "zenith:flutter present end success=%d", success ? 1 : 0);
+		wlr_log(
+			WLR_INFO,
+			"zenith:flutter present end success=%d active_frame=%d",
+			success ? 1 : 0,
+			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
+		);
 	}
 	return success;
 }
