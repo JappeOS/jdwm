@@ -15,12 +15,30 @@ void unlock_gl_context() {
 	gl_context_mutex().unlock();
 }
 
+bool try_lock_gl_context() {
+	return gl_context_mutex().try_lock();
+}
+
 GlContextGuard::GlContextGuard() {
 	lock_gl_context();
 }
 
 GlContextGuard::~GlContextGuard() {
 	unlock_gl_context();
+}
+
+TryGlContextGuard::TryGlContextGuard()
+	: locked_(try_lock_gl_context()) {
+}
+
+TryGlContextGuard::~TryGlContextGuard() {
+	if (locked_) {
+		unlock_gl_context();
+	}
+}
+
+bool TryGlContextGuard::owns_lock() const {
+	return locked_;
 }
 
 } // namespace zenith::egl

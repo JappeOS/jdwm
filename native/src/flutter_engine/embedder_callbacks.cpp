@@ -4,7 +4,6 @@
 #include "rect.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "util/egl/egl_extensions.hpp"
-#include "util/egl/gl_context_lock.hpp"
 
 extern "C" {
 #include <GLES3/gl3.h>
@@ -21,8 +20,6 @@ extern "C" {
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <vector>
-
-static thread_local int flutter_gl_lock_depth = 0;
 
 static SwapChain<wlr_gles2_buffer>* current_composition_swap_chain(ZenithServer* server) {
 	return server != nullptr && server->output_manager != nullptr
@@ -67,13 +64,7 @@ bool flutter_make_current(void* userdata) {
 	if (state == nullptr || state->flutter_gl_context == nullptr) {
 		return false;
 	}
-	zenith::egl::lock_gl_context();
-	if (!wlr_egl_make_current(state->flutter_gl_context, NULL)) {
-		zenith::egl::unlock_gl_context();
-		return false;
-	}
-	flutter_gl_lock_depth++;
-	return true;
+	return wlr_egl_make_current(state->flutter_gl_context, NULL);
 }
 
 bool flutter_clear_current(void* userdata) {
@@ -81,12 +72,7 @@ bool flutter_clear_current(void* userdata) {
 	if (state == nullptr || state->flutter_gl_context == nullptr) {
 		return false;
 	}
-	const bool result = wlr_egl_unset_current(state->flutter_gl_context);
-	if (flutter_gl_lock_depth > 0) {
-		flutter_gl_lock_depth--;
-		zenith::egl::unlock_gl_context();
-	}
-	return result;
+	return wlr_egl_unset_current(state->flutter_gl_context);
 }
 
 uint32_t flutter_fbo_callback(void* userdata) {

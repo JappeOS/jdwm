@@ -448,7 +448,11 @@ void output_frame(wl_listener* listener, void* data) {
 
 	bool output_committed = false;
 	{
-		zenith::egl::GlContextGuard gl_guard;
+		zenith::egl::TryGlContextGuard gl_guard;
+		if (!gl_guard.owns_lock()) {
+			wl_event_source_timer_update(output->schedule_frame_timer, 1);
+			return;
+		}
 		output_committed = wlr_scene_output_commit(output->scene_output, nullptr);
 	}
 	if (!output_committed) {
