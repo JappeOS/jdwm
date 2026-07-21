@@ -1,44 +1,67 @@
 #include "gl_context_lock.hpp"
 
+#include <atomic>
+
 namespace zenith::egl {
+
+static std::atomic_bool& gl_context_serialization_enabled_state() {
+	static std::atomic_bool enabled{false};
+	return enabled;
+}
+
+void set_gl_context_serialization_enabled(bool enabled) {
+	gl_context_serialization_enabled_state().store(enabled);
+}
+
+bool gl_context_serialization_enabled() {
+	return gl_context_serialization_enabled_state().load();
+}
 
 std::recursive_mutex& gl_context_mutex() {
 	static std::recursive_mutex mutex;
 	return mutex;
 }
 
-void lock_gl_context() {
+bool lock_gl_context() {
+	if (!gl_context_serialization_enabled()) {
+		return false;
+	}
 	gl_context_mutex().lock();
+	return true;
 }
 
 void unlock_gl_context() {
 	gl_context_mutex().unlock();
 }
 
-bool try_lock_gl_context() {
-	return gl_context_mutex().try_lock();
-}
-
-GlContextGuard::GlContextGuard() {
-	lock_gl_context();
+GlContextGuard::GlContextGuard()
+	: locked_(lock_gl_context()) {
 }
 
 GlContextGuard::~GlContextGuard() {
-	unlock_gl_context();
-}
-
-TryGlContextGuard::TryGlContextGuard()
-	: locked_(try_lock_gl_context()) {
-}
-
-TryGlContextGuard::~TryGlContextGuard() {
 	if (locked_) {
 		unlock_gl_context();
 	}
 }
 
+TryGlContextGuard::TryGlContextGuard() {
+	if (!gl_context_serialization_enabled()) {
+		owns_lock_ = true;
+		return;
+	}
+
+	locked_mutex_ = gl_context_mutex().try_lock();
+	owns_lock_ = locked_mutex_;
+}
+
+TryGlContextGuard::~TryGlContextGuard() {
+	if (locked_mutex_) {
+		unlock_gl_context();
+	}
+}
+
 bool TryGlContextGuard::owns_lock() const {
-	return locked_;
+	return owns_lock_;
 }
 
 } // namespace zenith::egl

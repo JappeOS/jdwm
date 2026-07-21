@@ -19,6 +19,7 @@
 #include <string>
 
 extern "C" {
+#include <GLES2/gl2.h>
 #define static
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -55,6 +56,7 @@ static void zenith_preflight_libseat();
 static void zenith_debug_log_loaded_libs();
 static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode);
 static void zenith_maybe_allow_software_renderer();
+static void zenith_configure_gl_context_serialization(wlr_renderer* renderer);
 
 static bool path_exists(const char* path) {
 	return path != nullptr && access(path, F_OK) == 0;
@@ -99,6 +101,28 @@ static bool env_is_truthy(const char* value) {
 	return true;
 }
 
+static std::string lower_ascii(std::string value) {
+	for (char& c : value) {
+		if (c >= 'A' && c <= 'Z') {
+			c = (char)(c - 'A' + 'a');
+		}
+	}
+	return value;
+}
+
+static bool gl_renderer_string_looks_software(const char* renderer_name) {
+	if (renderer_name == nullptr) {
+		return false;
+	}
+
+	std::string renderer = lower_ascii(renderer_name);
+	return renderer.find("llvmpipe") != std::string::npos ||
+	       renderer.find("softpipe") != std::string::npos ||
+	       renderer.find("software rasterizer") != std::string::npos ||
+	       renderer.find("swrast") != std::string::npos ||
+	       renderer.find("lavapipe") != std::string::npos;
+}
+
 static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode) {
 	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_MODIFIERS"))) {
 		setenv("WLR_DRM_NO_MODIFIERS", "1", 1);
@@ -136,6 +160,44 @@ static void zenith_maybe_allow_software_renderer() {
 	wlr_log(
 		WLR_INFO,
 		"zenith: allowing wlroots software GLES renderer fallback (WLR_RENDERER_ALLOW_SOFTWARE=1)"
+	);
+}
+
+static void zenith_configure_gl_context_serialization(wlr_renderer* renderer) {
+	if (env_is_truthy(std::getenv("ZENITH_SERIALIZE_GL_CONTEXTS"))) {
+		zenith::egl::set_gl_context_serialization_enabled(true);
+		wlr_log(WLR_INFO, "zenith: serializing EGL/GLES context access (ZENITH_SERIALIZE_GL_CONTEXTS)");
+		return;
+	}
+	if (env_is_truthy(std::getenv("ZENITH_DISABLE_GL_CONTEXT_SERIALIZATION"))) {
+		zenith::egl::set_gl_context_serialization_enabled(false);
+		wlr_log(
+			WLR_INFO,
+			"zenith: EGL/GLES context serialization disabled (ZENITH_DISABLE_GL_CONTEXT_SERIALIZATION)"
+		);
+		return;
+	}
+
+	std::string renderer_name = "unknown";
+	bool software_renderer = false;
+	wlr_egl* egl = renderer != nullptr && wlr_renderer_is_gles2(renderer)
+		               ? wlr_gles2_renderer_get_egl(renderer)
+		               : nullptr;
+	if (egl != nullptr && wlr_egl_make_current(egl, NULL)) {
+		const GLubyte* gl_renderer = glGetString(GL_RENDERER);
+		if (gl_renderer != nullptr) {
+			renderer_name = reinterpret_cast<const char*>(gl_renderer);
+			software_renderer = gl_renderer_string_looks_software(renderer_name.c_str());
+		}
+		wlr_egl_unset_current(egl);
+	}
+
+	zenith::egl::set_gl_context_serialization_enabled(software_renderer);
+	wlr_log(
+		WLR_INFO,
+		"zenith: EGL/GLES context serialization %s (GL_RENDERER=%s)",
+		software_renderer ? "enabled" : "disabled",
+		renderer_name.c_str()
 	);
 }
 
@@ -336,6 +398,7 @@ ZenithServer::ZenithServer() {
 		wlr_log(WLR_ERROR, "Could not initialize wlroots renderer");
 		exit(3);
 	}
+	zenith_configure_gl_context_serialization(renderer);
 
 	/*
 	 * Auto-creates an allocator for us.
