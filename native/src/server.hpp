@@ -37,6 +37,7 @@ extern "C" {
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/util/box.h>
 #undef static
 struct wlr_xwayland;
 struct wlr_xwayland_surface;
@@ -113,6 +114,7 @@ public:
 	std::unordered_map<size_t, std::shared_ptr<ZenithToplevel>> toplevels{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithXdgPopup>> xdg_popups{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithToplevelDecoration>> toplevel_decorations{};
+	std::unordered_map<size_t, wlr_box> toplevel_geometries{};
 
 	wlr_seat* seat;
 	std::unique_ptr<ZenithPointer> pointer;

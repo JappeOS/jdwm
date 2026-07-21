@@ -3,6 +3,7 @@
 #include <platform_channels/binary_messenger.hpp>
 #include <platform_channels/incoming_message_dispatcher.hpp>
 #include <platform_channels/method_channel.h>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include "embedder_state.hpp"
@@ -31,6 +32,9 @@ struct ZenithOutput {
 	bool attach_render_locked = false;
 	bool cursor_mode_logged = false;
 	bool last_software_cursor_active = false;
+	bool cursor_frame_pending = false;
+	bool cursor_cleanup_pending = false;
+	bool cursor_visible_last_event = false;
 
 	wlr_scene_output* scene_output = nullptr;
 	wlr_scene_buffer* scene_buffer = nullptr;
@@ -39,6 +43,8 @@ struct ZenithOutput {
 	bool has_last_source_box = false;
 	int last_dest_width = 0;
 	int last_dest_height = 0;
+	uint64_t last_presented_source_serial = 0;
+	uint64_t last_frame_commit_ns = 0;
 	int swapchain_width = 0;
 	int swapchain_height = 0;
 
@@ -52,6 +58,9 @@ struct ZenithOutput {
 	void recreate_swapchain();
 	void recreate_swapchain(int width, int height);
 };
+
+std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
+	struct wlr_output* wlr_output, int width_override = 0, int height_override = 0);
 
 /*
  * This event is raised when a new output is detected, like a monitor or a projector.

@@ -57,11 +57,35 @@ static std::mutex g_resize_window_requests_mutex;
 static std::unordered_map<size_t, ResizeWindowRequest> g_pending_resize_window_requests;
 static std::unordered_set<size_t> g_resize_window_worker_scheduled;
 
+static void update_toplevel_geometry_cache(
+	ZenithServer* server, size_t view_id, const ResizeWindowRequest& request) {
+	if (server == nullptr || request.width <= 0 || request.height <= 0) {
+		return;
+	}
+
+	auto existing = server->toplevel_geometries.find(view_id);
+	if (request.has_x && request.has_y) {
+		server->toplevel_geometries.insert_or_assign(view_id, wlr_box{
+			.x = static_cast<int>(request.requested_x),
+			.y = static_cast<int>(request.requested_y),
+			.width = request.width,
+			.height = request.height,
+		});
+		return;
+	}
+
+	if (existing != server->toplevel_geometries.end()) {
+		existing->second.width = request.width;
+		existing->second.height = request.height;
+	}
+}
+
 static void apply_resize_window_request(ZenithServer* server, size_t view_id, const ResizeWindowRequest& request) {
 	auto view_it = server->toplevels.find(view_id);
 	if (view_it == server->toplevels.end()) {
 		return;
 	}
+	update_toplevel_geometry_cache(server, view_id, request);
 	if (zenith::xwayland_input::configure_xwayland_toplevel(
 			server,
 			view_id,

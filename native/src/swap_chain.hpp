@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -20,6 +21,7 @@ struct Slot {
 	std::vector<FlutterRect> damage_regions = {};
 	std::atomic<uint32_t> presentation_refs{0};
 	std::atomic<int> ready_fence_fd{-1};
+	std::atomic<uint64_t> frame_serial{0};
 
 	void acquire_presentation();
 	void release_presentation();
@@ -37,6 +39,7 @@ struct SwapChain {
 	std::vector<std::shared_ptr<Slot<T>>> slots = {};
 	std::shared_ptr<Slot<T>> write_buffer = {};
 	std::shared_ptr<Slot<T>> latest_buffer = {};
+	std::atomic<uint64_t> next_frame_serial{1};
 
 	[[nodiscard]] T* start_write();
 

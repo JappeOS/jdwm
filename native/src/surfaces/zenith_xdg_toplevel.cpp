@@ -83,6 +83,9 @@ const char* ZenithXdgToplevel::protocol() const {
 
 void zenith_xdg_toplevel_destroy(wl_listener* listener, void* data) {
 	ZenithXdgToplevel* zenith_xdg_toplevel = wl_container_of(listener, zenith_xdg_toplevel, destroy);
+	auto* server = ZenithServer::instance();
+	size_t id = zenith_xdg_toplevel->zenith_xdg_surface->zenith_surface->id;
+	server->toplevel_geometries.erase(id);
 
 	// wlroots emits toplevel->events.destroy and then asserts all listener
 	// lists are empty, so detach every toplevel listener here.

@@ -13,12 +13,16 @@ double output_refresh_hz(const wlr_output* output) {
 	return static_cast<double>(output->refresh) / 1000.0;
 }
 
-uint64_t next_presentation_time_ns(uint64_t now_ns, const wlr_output* output) {
+uint64_t output_frame_interval_ns(const wlr_output* output) {
 	double refresh = output_refresh_hz(output);
 	if (refresh <= 0.0) {
 		refresh = 60.0;
 	}
-	return now_ns + static_cast<uint64_t>(1'000'000'000ull / refresh);
+	return static_cast<uint64_t>(1'000'000'000ull / refresh);
+}
+
+uint64_t next_presentation_time_ns(uint64_t now_ns, const wlr_output* output) {
+	return now_ns + output_frame_interval_ns(output);
 }
 
 } // namespace zenith::render

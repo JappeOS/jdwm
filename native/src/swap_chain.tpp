@@ -144,6 +144,8 @@ void SwapChain<T>::end_write(array_view<FlutterRect> damage, int ready_fence_fd)
 	}
 	write_buffer->damage_regions = std::vector(damage.begin(), damage.end());
 	write_buffer->set_ready_fence_fd(ready_fence_fd);
+	const uint64_t serial = next_frame_serial.fetch_add(1, std::memory_order_relaxed);
+	write_buffer->frame_serial.store(serial, std::memory_order_release);
 	latest_buffer = write_buffer;
 }
 

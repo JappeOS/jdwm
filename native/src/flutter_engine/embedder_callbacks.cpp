@@ -21,8 +21,10 @@ extern "C" {
 #include <unistd.h>
 #include <vector>
 
-static ZenithOutput* current_render_output(ZenithServer* server) {
-	return server->output_manager->current_render_output();
+static SwapChain<wlr_gles2_buffer>* current_composition_swap_chain(ZenithServer* server) {
+	return server != nullptr && server->output_manager != nullptr
+		       ? server->output_manager->composition_source_swap_chain()
+		       : nullptr;
 }
 
 static int create_frame_ready_fence_fd() {
@@ -73,11 +75,11 @@ uint32_t flutter_fbo_callback(void* userdata) {
 
 GLuint attach_framebuffer() {
 	ZenithServer* server = ZenithServer::instance();
-	ZenithOutput* output = current_render_output(server);
-	if (output == nullptr || output->swap_chain == nullptr) {
+	SwapChain<wlr_gles2_buffer>* swap_chain = current_composition_swap_chain(server);
+	if (swap_chain == nullptr) {
 		return 0;
 	}
-	wlr_gles2_buffer* gles2_buffer = output->swap_chain->start_write();
+	wlr_gles2_buffer* gles2_buffer = swap_chain->start_write();
 	if (gles2_buffer == nullptr) {
 		return 0;
 	}
@@ -102,14 +104,14 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 
 bool commit_framebuffer(array_view<FlutterRect> damage, int ready_fence_fd) {
 	ZenithServer* server = ZenithServer::instance();
-	ZenithOutput* output = current_render_output(server);
-	if (output == nullptr || output->swap_chain == nullptr) {
+	SwapChain<wlr_gles2_buffer>* swap_chain = current_composition_swap_chain(server);
+	if (swap_chain == nullptr) {
 		if (ready_fence_fd != -1) {
 			close(ready_fence_fd);
 		}
 		return false;
 	}
-	output->swap_chain->end_write(damage, ready_fence_fd);
+	swap_chain->end_write(damage, ready_fence_fd);
 	// Ensure freshly rendered frames are presented even if no input event
 	// (like pointer motion) occurs to trigger a frame.
 	std::vector<FlutterRect> frame_damage(damage.begin(), damage.end());
@@ -219,8 +221,11 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 	channel<double> height_chan = {};
 	auto* server = ZenithServer::instance();
 	server->callable_queue.enqueue([server, &height_chan] {
-		ZenithOutput* output = current_render_output(server);
-		height_chan.write(output != nullptr ? output->swapchain_height : 0);
+		int height =
+			(server != nullptr && server->output_manager != nullptr)
+				? server->output_manager->composition_source_height()
+				: 0;
+		height_chan.write(height);
 	});
 	double height = height_chan.read();
 
@@ -231,10 +236,10 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 
 void flutter_populate_existing_damage(void* user_data, intptr_t fbo_id, FlutterDamage* existing_damage) {
 	ZenithServer* server = ZenithServer::instance();
-	ZenithOutput* output = current_render_output(server);
+	SwapChain<wlr_gles2_buffer>* swap_chain = current_composition_swap_chain(server);
 	array_view<FlutterRect> damage_regions =
-		(output != nullptr && output->swap_chain != nullptr)
-			? output->swap_chain->get_damage_regions()
+		(swap_chain != nullptr)
+			? swap_chain->get_damage_regions()
 			: array_view<FlutterRect>(nullptr, 0);
 
 	// TODO: Who should free this object? Me or Flutter?

@@ -5,11 +5,13 @@
 #include "swap_chain.hpp"
 #include "util/wlr/scoped_wlr_buffer.hpp"
 #include "debug.hpp"
+#include "cursor_debug.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "output/rendering_policy.hpp"
 #include "output/presentation_timing.hpp"
 #include <unistd.h>
 #include <cstdlib>
+#include <cinttypes>
 #include <vector>
 
 extern "C" {
@@ -23,6 +25,7 @@ extern "C" {
 #include <wlr/render/drm_format_set.h>
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_output_layout.h>
 #define class wlroots_xwayland_class
 #include <wlr/xwayland/xwayland.h>
 #undef class
@@ -51,9 +54,6 @@ ZenithOutput::ZenithOutput(struct wlr_output* wlr_output)
 	scene_output = wlr_scene_output_create(server->scene, wlr_output);
 	scene_buffer = wlr_scene_buffer_create(&server->scene->tree, nullptr);
 }
-
-static std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_swap_chain(
-	wlr_output* wlr_output, int width_override = 0, int height_override = 0);
 
 static bool software_cursor_active(wlr_output* wlr_output) {
 	struct wlr_output_cursor* cur;
@@ -195,15 +195,58 @@ static void free_drm_format(struct wlr_drm_format* format) {
 	free(format);
 }
 
-static void notify_legacy_clients_frame_done(ZenithServer* server) {
+static bool boxes_intersect(const wlr_box& a, const wlr_box& b) {
+	return a.width > 0 && a.height > 0 && b.width > 0 && b.height > 0 &&
+	       a.x < b.x + b.width &&
+	       a.x + a.width > b.x &&
+	       a.y < b.y + b.height &&
+	       a.y + a.height > b.y;
+}
+
+static bool output_layout_box(ZenithServer* server, wlr_output* wlr_output, wlr_box* box_out) {
+	if (server == nullptr || wlr_output == nullptr || box_out == nullptr) {
+		return false;
+	}
+	if (server->output_layout != nullptr) {
+		wlr_output_layout_get_box(server->output_layout, wlr_output, box_out);
+	}
+	if (box_out->width <= 0 || box_out->height <= 0) {
+		box_out->x = 0;
+		box_out->y = 0;
+		box_out->width = wlr_output->width;
+		box_out->height = wlr_output->height;
+	}
+	return box_out->width > 0 && box_out->height > 0;
+}
+
+static bool toplevel_intersects_output(ZenithServer* server, size_t view_id, const wlr_box& output_box) {
 	if (server == nullptr) {
+		return true;
+	}
+	auto geometry = server->toplevel_geometries.find(view_id);
+	if (geometry == server->toplevel_geometries.end()) {
+		// New clients may commit before Dart has sent placement geometry.
+		// Keep the old behavior until we have enough data to filter safely.
+		return true;
+	}
+	return boxes_intersect(geometry->second, output_box);
+}
+
+static void notify_legacy_clients_frame_done(ZenithServer* server, wlr_output* wlr_output) {
+	if (server == nullptr) {
+		return;
+	}
+	wlr_box output_box = {};
+	if (!output_layout_box(server, wlr_output, &output_box)) {
 		return;
 	}
 
 	timespec frame_done_now{};
 	clock_gettime(CLOCK_MONOTONIC, &frame_done_now);
 	for (auto& [id, view]: server->xdg_toplevels) {
-		(void)id;
+		if (!toplevel_intersects_output(server, id, output_box)) {
+			continue;
+		}
 		wlr_xdg_surface* xdg_surface = view->xdg_toplevel->base;
 		if (!xdg_surface->surface->mapped || !view->visible()) {
 			continue;
@@ -222,7 +265,9 @@ static void notify_legacy_clients_frame_done(ZenithServer* server) {
 	}
 
 	for (auto& [id, view]: server->xwayland_toplevels) {
-		(void)id;
+		if (!toplevel_intersects_output(server, id, output_box)) {
+			continue;
+		}
 		wlr_surface* surface = view->xwayland_surface->surface;
 		if (surface == nullptr || !surface->mapped || !view->visible()) {
 			continue;
@@ -267,11 +312,9 @@ void output_frame(wl_listener* listener, void* data) {
 
 	log_cursor_mode_transition(output);
 
-	ZenithOutput* source_output = server->output_manager->presentation_source_output(output);
-	if (source_output == nullptr ||
-	    source_output->swap_chain == nullptr ||
-	    output->scene_output == nullptr ||
-	    output->scene_buffer == nullptr) {
+	SwapChain<wlr_gles2_buffer>* source_swap_chain =
+		server->output_manager->composition_source_swap_chain();
+	if (source_swap_chain == nullptr || output->scene_output == nullptr || output->scene_buffer == nullptr) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
@@ -279,7 +322,7 @@ void output_frame(wl_listener* listener, void* data) {
 	ZenithOutput* vsync_output = server->output_manager->vsync_driver_output();
 	const bool is_vsync_driver = (output == vsync_output);
 
-	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_output->swap_chain->start_read_slot();
+	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_swap_chain->start_read_slot();
 	if (source_slot == nullptr || source_slot->buffer == nullptr) {
 		// Bootstrap: if we have no composed frame yet, still service one vsync
 		// tick so Flutter can produce the first frame.
@@ -289,15 +332,36 @@ void output_frame(wl_listener* listener, void* data) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
+	const bool cursor_repaint_requested =
+		output->cursor_frame_pending || software_cursor_active(output->wlr_output);
 	if (!source_slot->is_ready_nonblocking()) {
-		// Back-pressure: don't request a new Flutter frame until the latest
-		// composed frame is actually ready for scanout.
-		wl_event_source_timer_update(output->schedule_frame_timer, 4);
-		return;
+		// Cursor updates must not stall behind a not-yet-ready newest frame.
+		// Reuse the already-presented slot to clear old cursor pixels.
+		if (cursor_repaint_requested &&
+		    output->presented_slot != nullptr &&
+		    output->presented_slot->buffer != nullptr &&
+		    output->presented_slot->is_ready_nonblocking()) {
+			if (zenith_cursor_debug_enabled()) {
+				wlr_log(
+					WLR_INFO,
+					"zenith:cursor frame output='%s' reusing presented slot serial=%" PRIu64,
+					output->wlr_output->name,
+					output->presented_slot->frame_serial.load(std::memory_order_acquire)
+				);
+			}
+			source_slot = output->presented_slot;
+		} else {
+			// Back-pressure: don't request a new Flutter frame until the latest
+			// composed frame is actually ready for scanout.
+			wl_event_source_timer_update(output->schedule_frame_timer, 4);
+			return;
+		}
 	}
 	wlr_gles2_buffer* source_buffer = source_slot->buffer.get();
 	const bool extend_mode = server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend;
 	const auto& frame_damage = source_slot->damage_regions;
+	const uint64_t source_frame_serial = source_slot->frame_serial.load(std::memory_order_acquire);
+	const bool has_new_source_frame = source_frame_serial != output->last_presented_source_serial;
 
 	wlr_buffer* source_wlr_buffer = source_buffer->buffer;
 	struct wlr_box source_box_i = {};
@@ -324,8 +388,8 @@ void output_frame(wl_listener* listener, void* data) {
 			output->last_dest_height != source_box_i.height;
 	}
 
-	bool output_region_damaged = true;
-	if (extend_mode && have_source_box && !frame_damage.empty()) {
+	bool output_region_damaged = has_new_source_frame;
+	if (extend_mode && have_source_box && has_new_source_frame && !frame_damage.empty()) {
 		output_region_damaged = damage_intersects_output_source_box(frame_damage, source_box_i);
 	}
 
@@ -334,10 +398,12 @@ void output_frame(wl_listener* listener, void* data) {
 			!have_source_box ||
 			output->last_scene_buffer == nullptr ||
 			source_mapping_changed ||
+			output->cursor_frame_pending ||
+			output->cursor_cleanup_pending ||
 			software_cursor_active(output->wlr_output);
 		if (!force_present && !output_region_damaged) {
+			output->last_presented_source_serial = source_frame_serial;
 			if (is_vsync_driver) {
-				notify_legacy_clients_frame_done(server);
 				vsync_callback(server, output->wlr_output);
 			}
 			return;
@@ -345,11 +411,25 @@ void output_frame(wl_listener* listener, void* data) {
 	}
 
 	if (extend_mode) {
-		if (source_wlr_buffer != output->last_scene_buffer || output_region_damaged || source_mapping_changed) {
+		const bool force_scene_rebind_for_cursor_cleanup = output->cursor_cleanup_pending;
+		if (source_wlr_buffer != output->last_scene_buffer || output_region_damaged ||
+		    source_mapping_changed || force_scene_rebind_for_cursor_cleanup) {
+			if (force_scene_rebind_for_cursor_cleanup) {
+				// Force damage on this output when scrubbing stale software-cursor
+				// pixels left behind during cross-output cursor moves.
+				if (zenith_cursor_debug_enabled()) {
+					wlr_log(
+						WLR_INFO,
+						"zenith:cursor cleanup output='%s' forcing scene rebind",
+						output->wlr_output->name
+					);
+				}
+				wlr_scene_buffer_set_buffer(output->scene_buffer, nullptr);
+			}
 			wlr_scene_buffer_set_buffer(output->scene_buffer, source_wlr_buffer);
 		}
 	} else {
-		set_scene_buffer_with_damage(output, source_wlr_buffer, source_output->swap_chain.get());
+		set_scene_buffer_with_damage(output, source_wlr_buffer, source_swap_chain);
 	}
 
 	if (extend_mode) {
@@ -374,6 +454,9 @@ void output_frame(wl_listener* listener, void* data) {
 		return;
 	}
 	output->last_scene_buffer = source_wlr_buffer;
+	output->cursor_frame_pending = false;
+	output->cursor_cleanup_pending = false;
+	output->last_presented_source_serial = source_frame_serial;
 	if (extend_mode && have_source_box) {
 		output->last_source_box = source_box_i;
 		output->has_last_source_box = true;
@@ -389,10 +472,12 @@ void output_frame(wl_listener* listener, void* data) {
 	// Notify scene-managed surfaces that this output frame has been presented.
 	timespec now{};
 	clock_gettime(CLOCK_MONOTONIC, &now);
+	output->last_frame_commit_ns =
+		static_cast<uint64_t>(now.tv_sec) * 1'000'000'000ull + static_cast<uint64_t>(now.tv_nsec);
 	wlr_scene_output_send_frame_done(output->scene_output, &now);
+	notify_legacy_clients_frame_done(server, output->wlr_output);
 
 	if (is_vsync_driver) {
-		notify_legacy_clients_frame_done(server);
 		vsync_callback(server, output->wlr_output);
 	}
 }
@@ -408,9 +493,14 @@ void output_request_state(wl_listener* listener, void* data) {
 	}
 
 	if (output->wlr_output->enabled) {
-		output->recreate_swapchain();
-		if (output->swap_chain == nullptr) {
-			wlr_log(WLR_ERROR, "zenith: output '%s' has no swapchain after state change", output->wlr_output->name);
+		if (server->output_manager == nullptr ||
+		    server->output_manager->mode() != multimonitor::MultiMonitorMode::Extend) {
+			output->recreate_swapchain();
+			if (output->swap_chain == nullptr) {
+				wlr_log(WLR_ERROR, "zenith: output '%s' has no swapchain after state change", output->wlr_output->name);
+			}
+		} else {
+			output->swap_chain.reset();
 		}
 	} else {
 		release_presented_slot(output);
@@ -450,7 +540,7 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 	return 0;
 }
 
-std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_swap_chain(
+std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 	wlr_output* wlr_output, int width_override, int height_override) {
 	ZenithServer* server = ZenithServer::instance();
 
@@ -530,9 +620,14 @@ void output_destroy(wl_listener* listener, void* data) {
 		output->scene_output = nullptr;
 	}
 	output->last_scene_buffer = nullptr;
+	output->cursor_frame_pending = false;
+	output->cursor_cleanup_pending = false;
+	output->cursor_visible_last_event = false;
 	output->has_last_source_box = false;
 	output->last_dest_width = 0;
 	output->last_dest_height = 0;
+	output->last_presented_source_serial = 0;
+	output->last_frame_commit_ns = 0;
 	release_presented_slot(output);
 
 	server->output_manager->handle_output_removed(output);
@@ -577,10 +672,16 @@ bool ZenithOutput::enable() {
 		wlr_log(WLR_INFO, "zenith: forced software cursor lock on output '%s'", wlr_output->name);
 	}
 
-	recreate_swapchain();
-	if (swap_chain == nullptr) {
-		wlr_log(WLR_ERROR, "zenith: failed to enable output '%s' due to swapchain init failure", wlr_output->name);
-		return false;
+	if (server == nullptr ||
+	    server->output_manager == nullptr ||
+	    server->output_manager->mode() != multimonitor::MultiMonitorMode::Extend) {
+		recreate_swapchain();
+		if (swap_chain == nullptr) {
+			wlr_log(WLR_ERROR, "zenith: failed to enable output '%s' due to swapchain init failure", wlr_output->name);
+			return false;
+		}
+	} else {
+		swap_chain.reset();
 	}
 	return true;
 }
@@ -612,7 +713,7 @@ void ZenithOutput::recreate_swapchain() {
 }
 
 void ZenithOutput::recreate_swapchain(int width, int height) {
-	auto new_swap_chain = create_swap_chain(wlr_output, width, height);
+	auto new_swap_chain = create_output_swap_chain(wlr_output, width, height);
 	if (new_swap_chain == nullptr) {
 		wlr_log(WLR_ERROR, "zenith: failed to recreate swapchain for output '%s'", wlr_output->name);
 		return;
@@ -622,9 +723,14 @@ void ZenithOutput::recreate_swapchain(int width, int height) {
 	swapchain_width = width;
 	swapchain_height = height;
 	last_scene_buffer = nullptr;
+	cursor_frame_pending = false;
+	cursor_cleanup_pending = false;
+	cursor_visible_last_event = false;
 	has_last_source_box = false;
 	last_dest_width = 0;
 	last_dest_height = 0;
+	last_presented_source_serial = 0;
+	last_frame_commit_ns = 0;
 	if (scene_buffer != nullptr) {
 		wlr_scene_buffer_set_buffer(scene_buffer, nullptr);
 	}

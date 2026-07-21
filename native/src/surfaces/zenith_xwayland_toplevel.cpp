@@ -408,6 +408,7 @@ void zenith_xwayland_surface_destroy(wl_listener* listener, void* data) {
 	wl_list_remove(&toplevel->destroy.link);
 
 	if (toplevel->registered) {
+		server->toplevel_geometries.erase(toplevel->view_id);
 		server->xwayland_toplevels.erase(toplevel->view_id);
 		server->toplevels.erase(toplevel->view_id);
 		toplevel->registered = false;
@@ -542,6 +543,7 @@ void zenith_xwayland_surface_dissociate(wl_listener* listener, void* data) {
 	toplevel->handle_unmap();
 	toplevel->detach_surface_listeners();
 	if (toplevel->registered) {
+		server->toplevel_geometries.erase(toplevel->view_id);
 		server->xwayland_toplevels.erase(toplevel->view_id);
 		server->toplevels.erase(toplevel->view_id);
 		toplevel->registered = false;
