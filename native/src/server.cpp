@@ -515,6 +515,13 @@ void ZenithServer::run(const char* startup_command) {
 	// Create 2 OpenGL shared contexts for rendering operations.
 	wlr_egl* flutter_gl_context = create_shared_egl_context(main_egl);
 	wlr_egl* flutter_resource_gl_context = create_shared_egl_context(main_egl);
+	if (flutter_gl_context == nullptr || flutter_resource_gl_context == nullptr) {
+		wlr_log(
+			WLR_ERROR,
+			"zenith: failed to create Flutter EGL contexts; cannot start Flutter renderer"
+		);
+		exit(11);
+	}
 
 	embedder_state = std::make_unique<EmbedderState>(flutter_gl_context, flutter_resource_gl_context);
 

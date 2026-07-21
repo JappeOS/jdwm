@@ -61,11 +61,17 @@ static int create_frame_ready_fence_fd() {
 
 bool flutter_make_current(void* userdata) {
 	auto* state = static_cast<EmbedderState*>(userdata);
+	if (state == nullptr || state->flutter_gl_context == nullptr) {
+		return false;
+	}
 	return wlr_egl_make_current(state->flutter_gl_context, NULL);
 }
 
 bool flutter_clear_current(void* userdata) {
 	auto* state = static_cast<EmbedderState*>(userdata);
+	if (state == nullptr || state->flutter_gl_context == nullptr) {
+		return false;
+	}
 	return wlr_egl_unset_current(state->flutter_gl_context);  // already correct signature
 }
 
@@ -218,6 +224,9 @@ void flutter_platform_message_callback(const FlutterPlatformMessage* message, vo
 
 bool flutter_make_resource_current(void* userdata) {
 	auto* state = static_cast<EmbedderState*>(userdata);
+	if (state == nullptr || state->flutter_resource_gl_context == nullptr) {
+		return false;
+	}
 	return wlr_egl_make_current(state->flutter_resource_gl_context, NULL);
 }
 
