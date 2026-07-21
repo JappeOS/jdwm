@@ -589,11 +589,6 @@ void ZenithServer::run(const char* startup_command) {
 		exit(11);
 	}
 
-	embedder_state = std::make_unique<EmbedderState>(flutter_gl_context, flutter_resource_gl_context);
-
-	// Run the engine.
-	embedder_state->run_engine();
-
 	if (!wlr_backend_start(backend)) {
 		wlr_log(WLR_ERROR, "Could not start backend");
 		wlr_backend_destroy(backend);
@@ -601,8 +596,28 @@ void ZenithServer::run(const char* startup_command) {
 		exit(10);
 	}
 
+	// Start wlroots outputs before Flutter's render thread. This avoids a
+	// software-renderer startup deadlock where Flutter makes its shared GL
+	// context current while the main thread still has to create output
+	// swapchains. Keep embedder_state null during backend start so output
+	// discovery doesn't enqueue Flutter calls before FlutterEngineRun().
+	embedder_state = std::make_unique<EmbedderState>(flutter_gl_context, flutter_resource_gl_context);
+	embedder_state->run_engine();
+	if (output_manager != nullptr) {
+		if (output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
+			for (const auto& current_output : outputs) {
+				if (current_output != nullptr) {
+					output_manager->handle_output_state_changed(current_output.get());
+					break;
+				}
+			}
+		} else if (output != nullptr) {
+			output_manager->handle_output_state_changed(output.get());
+		}
+	}
+
 	// Fallback startup kick: make sure at least one frame is scheduled right
-	// after backend start so first client content can appear without input.
+	// after Flutter starts so first client content can appear without input.
 	output_manager->schedule_compositor_frame();
 
 	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", socket);

@@ -238,7 +238,6 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 				EGLDisplay egl_display = wlr_egl_get_display(egl);
 				scoped_buffer = scoped_wlr_buffer(buffer, [fence_fd, egl_display, sync](
 					  wlr_buffer* buffer) {
-					zenith::egl::GlContextGuard gl_guard;
 					eglDestroySyncKHR(egl_display, sync);
 					close(fence_fd);
 				});
@@ -328,7 +327,12 @@ int extract_fd_from_native_fence(EGLSyncKHR* sync_out) {
 		  EGL_NONE,
 	};
 
-	zenith::egl::GlContextGuard gl_guard;
+	zenith::egl::TryGlContextGuard gl_guard;
+	if (!gl_guard.owns_lock()) {
+		*sync_out = EGL_NO_SYNC_KHR;
+		return -1;
+	}
+
 	wlr_egl* egl = wlr_gles2_renderer_get_egl(ZenithServer::instance()->renderer);
 	wlr_egl_make_current(egl, NULL);
 

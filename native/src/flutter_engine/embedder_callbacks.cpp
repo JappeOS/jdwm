@@ -24,6 +24,31 @@ extern "C" {
 
 static thread_local int flutter_gl_lock_depth = 0;
 
+class FlutterGlLockReleaseForBlockingCall {
+public:
+	FlutterGlLockReleaseForBlockingCall() {
+		while (flutter_gl_lock_depth > 0) {
+			--flutter_gl_lock_depth;
+			++released_depth_;
+			zenith::egl::unlock_gl_context();
+		}
+	}
+
+	~FlutterGlLockReleaseForBlockingCall() {
+		for (int i = 0; i < released_depth_; i++) {
+			if (zenith::egl::lock_gl_context()) {
+				++flutter_gl_lock_depth;
+			}
+		}
+	}
+
+	FlutterGlLockReleaseForBlockingCall(const FlutterGlLockReleaseForBlockingCall&) = delete;
+	FlutterGlLockReleaseForBlockingCall& operator=(const FlutterGlLockReleaseForBlockingCall&) = delete;
+
+private:
+	int released_depth_ = 0;
+};
+
 static SwapChain<wlr_gles2_buffer>* current_composition_swap_chain(ZenithServer* server) {
 	return server != nullptr && server->output_manager != nullptr
 		       ? server->output_manager->composition_source_swap_chain()
@@ -202,7 +227,11 @@ bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_
 		return;
 	});
 
-	wlr_gles2_texture_attribs attribs = texture_attribs.read();
+	wlr_gles2_texture_attribs attribs = {};
+	{
+		FlutterGlLockReleaseForBlockingCall release_gl_lock;
+		attribs = texture_attribs.read();
+	}
 	if (attribs.tex == 0) {
 		return false;
 	}
@@ -265,7 +294,11 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 				: 0;
 		height_chan.write(height);
 	});
-	double height = height_chan.read();
+	double height = 0;
+	{
+		FlutterGlLockReleaseForBlockingCall release_gl_lock;
+		height = height_chan.read();
+	}
 
 	return FlutterTransformation{
 		  1.0, 0.0, 0.0, 0.0, -1.0, height, 0.0, 0.0, 1.0,
