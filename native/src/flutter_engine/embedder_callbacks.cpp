@@ -288,20 +288,11 @@ bool flutter_make_resource_current(void* userdata) {
  * This flips the rendering on the x-axis.
  */
 FlutterTransformation flutter_surface_transformation(void* data) {
-	channel<double> height_chan = {};
 	auto* server = ZenithServer::instance();
-	server->callable_queue.enqueue([server, &height_chan] {
-		int height =
-			(server != nullptr && server->output_manager != nullptr)
-				? server->output_manager->composition_source_height()
-				: 0;
-		height_chan.write(height);
-	});
-	double height = 0;
-	{
-		FlutterGlLockReleaseForBlockingCall release_gl_lock;
-		height = height_chan.read();
-	}
+	double height =
+		server != nullptr
+			? server->composition_source_height_cache.load(std::memory_order_acquire)
+			: 0;
 
 	return FlutterTransformation{
 		  1.0, 0.0, 0.0, 0.0, -1.0, height, 0.0, 0.0, 1.0,

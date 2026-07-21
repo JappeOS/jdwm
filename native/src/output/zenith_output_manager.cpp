@@ -346,7 +346,11 @@ void ZenithOutputManager::ensure_composition_target() const {
 }
 
 void ZenithOutputManager::send_single_output_metrics(ZenithServer* server, ZenithOutput* output) {
-	if (server->embedder_state == nullptr || output == nullptr || output->wlr_output == nullptr) {
+	if (server == nullptr || output == nullptr || output->wlr_output == nullptr) {
+		return;
+	}
+	server->composition_source_height_cache.store(output->wlr_output->height, std::memory_order_release);
+	if (server->embedder_state == nullptr) {
 		return;
 	}
 	FlutterWindowMetricsEvent window_metrics = {};
@@ -358,7 +362,7 @@ void ZenithOutputManager::send_single_output_metrics(ZenithServer* server, Zenit
 }
 
 void ZenithOutputManager::send_virtual_desktop_metrics(ZenithServer* server) {
-	if (server->embedder_state == nullptr || server->output_layout == nullptr) {
+	if (server == nullptr || server->output_layout == nullptr) {
 		return;
 	}
 
@@ -373,6 +377,10 @@ void ZenithOutputManager::send_virtual_desktop_metrics(ZenithServer* server) {
 		}
 		width = server->output->wlr_output->width;
 		height = server->output->wlr_output->height;
+	}
+	server->composition_source_height_cache.store(height, std::memory_order_release);
+	if (server->embedder_state == nullptr) {
+		return;
 	}
 
 	FlutterWindowMetricsEvent window_metrics = {};

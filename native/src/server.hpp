@@ -1,6 +1,7 @@
 #pragma once
 
 #include <wayland-server.h>
+#include <atomic>
 #include <list>
 #include <mutex>
 #include <unordered_map>
@@ -82,6 +83,7 @@ public:
 	std::vector<std::shared_ptr<ZenithOutput>> outputs = {};
 	std::shared_ptr<ZenithOutput> output = {}; // We support a single output at the moment.
 	std::unique_ptr<zenith::ZenithOutputManager> output_manager{};
+	std::atomic<int> composition_source_height_cache{0};
 
 	// The maximum size a window can be, which is basically the size of the screen minus the status bar and possibly
 	// other decorations.
