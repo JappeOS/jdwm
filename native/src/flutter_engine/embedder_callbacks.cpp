@@ -124,6 +124,14 @@ bool commit_framebuffer(array_view<FlutterRect> damage, int ready_fence_fd) {
 void flutter_vsync_callback(void* userdata, intptr_t baton) {
 	auto* state = static_cast<EmbedderState*>(userdata);
 	state->set_baton(baton);
+	auto* server = ZenithServer::instance();
+	if (server != nullptr && server->output_manager != nullptr) {
+		server->callable_queue.enqueue([server] {
+			if (server->output_manager != nullptr) {
+				server->output_manager->schedule_compositor_frame();
+			}
+		});
+	}
 }
 
 bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_id, size_t width, size_t height,

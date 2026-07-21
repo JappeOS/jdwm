@@ -519,7 +519,6 @@ std::optional<intptr_t> EmbedderState::get_baton() {
 
 void EmbedderState::set_baton(intptr_t p_baton) {
 	std::scoped_lock lock(baton_mutex);
-	assert(new_baton == false);
 	baton = p_baton;
 	new_baton = true;
 }
