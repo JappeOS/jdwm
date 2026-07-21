@@ -60,6 +60,9 @@ static int create_frame_ready_fence_fd() {
 	if (server == nullptr || server->renderer == nullptr) {
 		return -1;
 	}
+	if (zenith::egl::gl_context_serialization_enabled()) {
+		return -1;
+	}
 	if (eglCreateSyncKHR == nullptr ||
 	    eglDestroySyncKHR == nullptr ||
 	    eglDupNativeFenceFDANDROID == nullptr) {
@@ -144,7 +147,7 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 	if (ready_fence_fd == -1) {
 		static bool logged_sync_fallback = false;
 		if (!logged_sync_fallback) {
-			wlr_log(WLR_INFO, "zenith: missing native fence export, falling back to glFinish in flutter_present");
+			wlr_log(WLR_INFO, "zenith: using glFinish fallback in flutter_present");
 			logged_sync_fallback = true;
 		}
 		glFinish();

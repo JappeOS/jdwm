@@ -321,6 +321,10 @@ int dup_dmabuf_wait_fd(const wlr_dmabuf_attributes& dmabuf_attributes) {
 // through the event loop when all GPU commands finish.
 int extract_fd_from_native_fence(EGLSyncKHR* sync_out) {
 	assert(sync_out != nullptr);
+	if (zenith::egl::gl_context_serialization_enabled()) {
+		*sync_out = EGL_NO_SYNC_KHR;
+		return -1;
+	}
 
 	EGLint attrib_list[] = {
 		  EGL_SYNC_NATIVE_FENCE_FD_ANDROID, EGL_NO_NATIVE_FENCE_FD_ANDROID,

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cerrno>
 #include <poll.h>
+#include <time.h>
 #include <unistd.h>
 
 extern "C" {
@@ -13,6 +14,14 @@ extern "C" {
 #undef static
 }
 
+static constexpr uint64_t ZENITH_FENCE_READINESS_TIMEOUT_NS = 500'000'000ull;
+
+static uint64_t zenith_swap_chain_monotonic_now_ns() {
+	timespec now{};
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return static_cast<uint64_t>(now.tv_sec) * 1'000'000'000ull + static_cast<uint64_t>(now.tv_nsec);
+}
+
 template<class T>
 Slot<T>::Slot(std::shared_ptr<T> buffer) : buffer{buffer} {
 }
@@ -20,6 +29,7 @@ Slot<T>::Slot(std::shared_ptr<T> buffer) : buffer{buffer} {
 template<class T>
 Slot<T>::~Slot() {
 	int fence_fd = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+	ready_fence_set_ns.store(0, std::memory_order_release);
 	if (fence_fd != -1) {
 		close(fence_fd);
 	}
@@ -47,6 +57,7 @@ bool Slot<T>::is_presented() const {
 
 template<class T>
 void Slot<T>::set_ready_fence_fd(int fd) {
+	ready_fence_set_ns.store(fd != -1 ? zenith_swap_chain_monotonic_now_ns() : 0, std::memory_order_release);
 	int previous = ready_fence_fd.exchange(fd, std::memory_order_acq_rel);
 	if (previous != -1 && previous != fd) {
 		close(previous);
@@ -68,6 +79,7 @@ bool Slot<T>::is_ready_nonblocking() {
 	int ret = poll(&pfd, 1, 0);
 	if (ret > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
 		int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+		ready_fence_set_ns.store(0, std::memory_order_release);
 		if (consumed != -1) {
 			close(consumed);
 		}
@@ -75,10 +87,24 @@ bool Slot<T>::is_ready_nonblocking() {
 	}
 	if (ret < 0 && errno != EINTR) {
 		int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+		ready_fence_set_ns.store(0, std::memory_order_release);
 		if (consumed != -1) {
 			close(consumed);
 		}
 		return true;
+	}
+
+	uint64_t set_ns = ready_fence_set_ns.load(std::memory_order_acquire);
+	if (set_ns != 0) {
+		uint64_t now_ns = zenith_swap_chain_monotonic_now_ns();
+		if (now_ns > set_ns && now_ns - set_ns > ZENITH_FENCE_READINESS_TIMEOUT_NS) {
+			int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
+			ready_fence_set_ns.store(0, std::memory_order_release);
+			if (consumed != -1) {
+				close(consumed);
+			}
+			return true;
+		}
 	}
 	return false;
 }

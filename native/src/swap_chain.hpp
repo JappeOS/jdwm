@@ -21,6 +21,7 @@ struct Slot {
 	std::vector<FlutterRect> damage_regions = {};
 	std::atomic<uint32_t> presentation_refs{0};
 	std::atomic<int> ready_fence_fd{-1};
+	std::atomic<uint64_t> ready_fence_set_ns{0};
 	std::atomic<uint64_t> frame_serial{0};
 
 	void acquire_presentation();
