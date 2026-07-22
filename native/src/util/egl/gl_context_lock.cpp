@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <time.h>
 
 namespace zenith::egl {
@@ -45,7 +46,7 @@ void set_flutter_frame_rendering_active(bool active) {
 	flutter_frame_rendering_active_state().store(active, std::memory_order_release);
 }
 
-bool flutter_frame_rendering_active() {
+static bool flutter_frame_rendering_active() {
 	return flutter_frame_rendering_active_state().load(std::memory_order_acquire);
 }
 
@@ -67,12 +68,12 @@ bool should_defer_for_flutter_frame_rendering() {
 	return true;
 }
 
-std::recursive_mutex& gl_context_mutex() {
+static std::recursive_mutex& gl_context_mutex() {
 	static std::recursive_mutex mutex;
 	return mutex;
 }
 
-bool lock_gl_context() {
+static bool lock_gl_context() {
 	if (!gl_context_serialization_enabled()) {
 		return false;
 	}
@@ -80,7 +81,7 @@ bool lock_gl_context() {
 	return true;
 }
 
-void unlock_gl_context() {
+static void unlock_gl_context() {
 	gl_context_mutex().unlock();
 }
 

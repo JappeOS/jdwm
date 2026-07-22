@@ -23,37 +23,6 @@ extern "C" {
 #include <unistd.h>
 #include <vector>
 
-static thread_local int flutter_gl_lock_depth = 0;
-
-static bool zenith_log_first_n(std::atomic<int>& counter, int limit) {
-	return counter.fetch_add(1, std::memory_order_relaxed) < limit;
-}
-
-class FlutterGlLockReleaseForBlockingCall {
-public:
-	FlutterGlLockReleaseForBlockingCall() {
-		while (flutter_gl_lock_depth > 0) {
-			--flutter_gl_lock_depth;
-			++released_depth_;
-			zenith::egl::unlock_gl_context();
-		}
-	}
-
-	~FlutterGlLockReleaseForBlockingCall() {
-		for (int i = 0; i < released_depth_; i++) {
-			if (zenith::egl::lock_gl_context()) {
-				++flutter_gl_lock_depth;
-			}
-		}
-	}
-
-	FlutterGlLockReleaseForBlockingCall(const FlutterGlLockReleaseForBlockingCall&) = delete;
-	FlutterGlLockReleaseForBlockingCall& operator=(const FlutterGlLockReleaseForBlockingCall&) = delete;
-
-private:
-	int released_depth_ = 0;
-};
-
 static SwapChain<wlr_gles2_buffer>* current_composition_swap_chain(ZenithServer* server) {
 	return server != nullptr && server->output_manager != nullptr
 		       ? server->output_manager->composition_source_swap_chain()
@@ -96,63 +65,21 @@ static int create_frame_ready_fence_fd() {
 }
 
 bool flutter_make_current(void* userdata) {
-	static std::atomic<int> begin_logs{0};
-	bool log_this_call = zenith_log_first_n(begin_logs, 20);
-	if (log_this_call) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:flutter make_current begin serialized=%d active_frame=%d",
-			zenith::egl::gl_context_serialization_enabled() ? 1 : 0,
-			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
-		);
-	}
-
 	auto* state = static_cast<EmbedderState*>(userdata);
 	if (state == nullptr || state->flutter_gl_context == nullptr) {
-		if (log_this_call) {
-			wlr_log(WLR_INFO, "zenith:flutter make_current missing context");
-		}
 		return false;
 	}
-
-	if (!wlr_egl_make_current(state->flutter_gl_context, NULL)) {
-		if (log_this_call) {
-			wlr_log(WLR_INFO, "zenith:flutter make_current failed");
-		}
-		return false;
-	}
-
-	if (log_this_call) {
-		wlr_log(WLR_INFO, "zenith:flutter make_current success");
-	}
-	return true;
+	return wlr_egl_make_current(state->flutter_gl_context, NULL);
 }
 
 bool flutter_clear_current(void* userdata) {
-	static std::atomic<int> logs{0};
-	bool log_this_call = zenith_log_first_n(logs, 20);
-	if (log_this_call) {
-		wlr_log(WLR_INFO, "zenith:flutter clear_current begin depth=%d", flutter_gl_lock_depth);
-	}
-
 	auto* state = static_cast<EmbedderState*>(userdata);
 	if (state == nullptr || state->flutter_gl_context == nullptr) {
-		if (log_this_call) {
-			wlr_log(WLR_INFO, "zenith:flutter clear_current missing context");
-		}
 		return false;
 	}
 
 	bool success = wlr_egl_unset_current(state->flutter_gl_context);
 	zenith::egl::set_flutter_frame_rendering_active(false);
-	if (log_this_call) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:flutter clear_current end success=%d active_frame=%d",
-			success ? 1 : 0,
-			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
-		);
-	}
 	return success;
 }
 
@@ -161,15 +88,6 @@ uint32_t flutter_fbo_callback(void* userdata) {
 	zenith::egl::set_flutter_frame_rendering_active(
 		zenith::egl::gl_context_serialization_enabled() && fbo != 0
 	);
-	static std::atomic<int> logs{0};
-	if (zenith_log_first_n(logs, 20)) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:flutter fbo_callback fbo=%u active_frame=%d",
-			fbo,
-			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
-		);
-	}
 	return fbo;
 }
 
@@ -188,16 +106,6 @@ GLuint attach_framebuffer() {
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage, present_info->frame_damage.num_rects);
-	static std::atomic<int> present_logs{0};
-	bool log_this_present = zenith_log_first_n(present_logs, 20);
-	if (log_this_present) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:flutter present begin damage=%zu serialized=%d",
-			frame_damage.size(),
-			zenith::egl::gl_context_serialization_enabled() ? 1 : 0
-		);
-	}
 	int ready_fence_fd = create_frame_ready_fence_fd();
 	if (ready_fence_fd == -1) {
 		static bool logged_sync_fallback = false;
@@ -210,14 +118,6 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 
 	bool success = commit_framebuffer(frame_damage, ready_fence_fd);
 	zenith::egl::set_flutter_frame_rendering_active(false);
-	if (log_this_present) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:flutter present end success=%d active_frame=%d",
-			success ? 1 : 0,
-			zenith::egl::flutter_frame_rendering_active() ? 1 : 0
-		);
-	}
 	return success;
 }
 
@@ -241,10 +141,6 @@ bool commit_framebuffer(array_view<FlutterRect> damage, int ready_fence_fd) {
 }
 
 void flutter_vsync_callback(void* userdata, intptr_t baton) {
-	static std::atomic<int> logs{0};
-	if (zenith_log_first_n(logs, 30)) {
-		wlr_log(WLR_INFO, "zenith:flutter vsync_request baton=%lld", static_cast<long long>(baton));
-	}
 	auto* state = static_cast<EmbedderState*>(userdata);
 	state->set_baton(baton);
 	auto* server = ZenithServer::instance();
@@ -298,11 +194,7 @@ bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_
 		return;
 	});
 
-	wlr_gles2_texture_attribs attribs = {};
-	{
-		FlutterGlLockReleaseForBlockingCall release_gl_lock;
-		attribs = texture_attribs.read();
-	}
+	wlr_gles2_texture_attribs attribs = texture_attribs.read();
 	if (attribs.tex == 0) {
 		return false;
 	}
@@ -344,23 +236,11 @@ void flutter_platform_message_callback(const FlutterPlatformMessage* message, vo
 }
 
 bool flutter_make_resource_current(void* userdata) {
-	static std::atomic<int> logs{0};
-	bool log_this_call = zenith_log_first_n(logs, 10);
-	if (log_this_call) {
-		wlr_log(WLR_INFO, "zenith:flutter make_resource_current begin");
-	}
 	auto* state = static_cast<EmbedderState*>(userdata);
 	if (state == nullptr || state->flutter_resource_gl_context == nullptr) {
-		if (log_this_call) {
-			wlr_log(WLR_INFO, "zenith:flutter make_resource_current missing context");
-		}
 		return false;
 	}
-	bool success = wlr_egl_make_current(state->flutter_resource_gl_context, NULL);
-	if (log_this_call) {
-		wlr_log(WLR_INFO, "zenith:flutter make_resource_current end success=%d", success ? 1 : 0);
-	}
-	return success;
+	return wlr_egl_make_current(state->flutter_resource_gl_context, NULL);
 }
 
 /*
@@ -373,10 +253,6 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 		server != nullptr
 			? server->composition_source_height_cache.load(std::memory_order_acquire)
 			: 0;
-	static std::atomic<int> logs{0};
-	if (zenith_log_first_n(logs, 10)) {
-		wlr_log(WLR_INFO, "zenith:flutter surface_transformation height=%.0f", height);
-	}
 
 	return FlutterTransformation{
 		  1.0, 0.0, 0.0, 0.0, -1.0, height, 0.0, 0.0, 1.0,
