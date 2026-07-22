@@ -16,7 +16,7 @@ extern "C" {
 
 static constexpr uint64_t ZENITH_FENCE_READINESS_TIMEOUT_NS = 500'000'000ull;
 
-static uint64_t zenith_swap_chain_monotonic_now_ns() {
+static inline uint64_t zenith_swap_chain_monotonic_now_ns() {
 	timespec now{};
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	return static_cast<uint64_t>(now.tv_sec) * 1'000'000'000ull + static_cast<uint64_t>(now.tv_nsec);
