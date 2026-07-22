@@ -360,6 +360,18 @@ class PlatformApi extends _$PlatformApi {
     int height = surface["height"];
     int scale = surface["scale"];
 
+    dynamic sourceBox = surface["source_box"];
+    Rect bufferSourceBox = Rect.fromLTWH(
+      (sourceBox["x"] as num).toDouble(),
+      (sourceBox["y"] as num).toDouble(),
+      (sourceBox["width"] as num).toDouble(),
+      (sourceBox["height"] as num).toDouble(),
+    );
+    Size bufferSize = Size(
+      (sourceBox["buffer_width"] as num).toDouble(),
+      (sourceBox["buffer_height"] as num).toDouble(),
+    );
+
     dynamic inputRegion = surface["input_region"];
     int left = inputRegion["x1"];
     int top = inputRegion["y1"];
@@ -410,6 +422,8 @@ class PlatformApi extends _$PlatformApi {
           surfacePosition: Offset(x.toDouble(), y.toDouble()),
           surfaceSize: Size(width.toDouble(), height.toDouble()),
           scale: scale.toDouble(),
+          bufferSourceBox: bufferSourceBox,
+          bufferSize: bufferSize,
           subsurfacesBelow: subsurfaceIdsBelow,
           subsurfacesAbove: subsurfaceIdsAbove,
           inputRegion: inputRegionRect,

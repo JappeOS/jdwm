@@ -8,7 +8,7 @@ wlr_box xdg_surface_get_visible_bounds(wlr_xdg_surface* xdg_surface) {
 	return {
 		  .x = 0,
 		  .y = 0,
-		  .width = xdg_surface->surface->current.buffer_width,
-		  .height = xdg_surface->surface->current.buffer_height,
+		  .width = xdg_surface->surface->current.width,
+		  .height = xdg_surface->surface->current.height,
 	};
 }

@@ -17,7 +17,8 @@ final surfaceControllerProvider = Provider<SurfaceController>(
 @Riverpod(keepAlive: true)
 Surface surfaceWidget(Ref ref, int viewId) {
   return Surface(
-    key: ref.watch(surfaceStatesProvider(viewId).select((state) => state.widgetKey)),
+    key: ref.watch(
+        surfaceStatesProvider(viewId).select((state) => state.widgetKey)),
     viewId: viewId,
   );
 }
@@ -31,6 +32,8 @@ abstract class SurfaceState with _$SurfaceState {
     required Offset surfacePosition,
     required Size surfaceSize,
     required double scale,
+    required Rect bufferSourceBox,
+    required Size bufferSize,
     required GlobalKey widgetKey,
     required GlobalKey textureKey,
     required List<int> subsurfacesBelow,
@@ -45,11 +48,11 @@ class SurfaceStates extends _$SurfaceStates {
   SurfaceState build(int viewId) {
     return _fromSnapshot(
       ref.read(surfaceControllerProvider).initial(
-        viewId: viewId,
-        role: SurfaceRole.none,
-        widgetKey: GlobalKey(),
-        textureKey: GlobalKey(),
-      ),
+            viewId: viewId,
+            role: SurfaceRole.none,
+            widgetKey: GlobalKey(),
+            textureKey: GlobalKey(),
+          ),
     );
   }
 
@@ -59,6 +62,8 @@ class SurfaceStates extends _$SurfaceStates {
     required Offset surfacePosition,
     required Size surfaceSize,
     required double scale,
+    required Rect bufferSourceBox,
+    required Size bufferSize,
     required List<int> subsurfacesBelow,
     required List<int> subsurfacesAbove,
     required Rect inputRegion,
@@ -72,6 +77,8 @@ class SurfaceStates extends _$SurfaceStates {
               surfacePosition: surfacePosition,
               surfaceSize: surfaceSize,
               scale: scale,
+              bufferSourceBox: bufferSourceBox,
+              bufferSize: bufferSize,
               subsurfacesBelow: subsurfacesBelow,
               subsurfacesAbove: subsurfacesAbove,
               inputRegion: inputRegion,
@@ -88,6 +95,8 @@ class SurfaceStates extends _$SurfaceStates {
       surfacePosition: s.surfacePosition,
       surfaceSize: s.surfaceSize,
       scale: s.scale,
+      bufferSourceBox: s.bufferSourceBox,
+      bufferSize: s.bufferSize,
       widgetKey: s.widgetKey,
       textureKey: s.textureKey,
       subsurfacesBelow: s.subsurfacesBelow,
@@ -104,6 +113,8 @@ class SurfaceStates extends _$SurfaceStates {
       surfacePosition: s.surfacePosition,
       surfaceSize: s.surfaceSize,
       scale: s.scale,
+      bufferSourceBox: s.bufferSourceBox,
+      bufferSize: s.bufferSize,
       widgetKey: s.widgetKey,
       textureKey: s.textureKey,
       subsurfacesBelow: s.subsurfacesBelow,

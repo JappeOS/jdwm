@@ -8,6 +8,8 @@ class SurfaceSnapshot {
   final Offset surfacePosition;
   final Size surfaceSize;
   final double scale;
+  final Rect bufferSourceBox;
+  final Size bufferSize;
   final GlobalKey widgetKey;
   final GlobalKey textureKey;
   final List<int> subsurfacesBelow;
@@ -21,6 +23,8 @@ class SurfaceSnapshot {
     required this.surfacePosition,
     required this.surfaceSize,
     required this.scale,
+    required this.bufferSourceBox,
+    required this.bufferSize,
     required this.widgetKey,
     required this.textureKey,
     required this.subsurfacesBelow,
@@ -35,6 +39,8 @@ class SurfaceCommitData {
   final Offset surfacePosition;
   final Size surfaceSize;
   final double scale;
+  final Rect bufferSourceBox;
+  final Size bufferSize;
   final List<int> subsurfacesBelow;
   final List<int> subsurfacesAbove;
   final Rect inputRegion;
@@ -45,6 +51,8 @@ class SurfaceCommitData {
     required this.surfacePosition,
     required this.surfaceSize,
     required this.scale,
+    required this.bufferSourceBox,
+    required this.bufferSize,
     required this.subsurfacesBelow,
     required this.subsurfacesAbove,
     required this.inputRegion,
@@ -67,6 +75,8 @@ class SurfaceController {
       surfacePosition: Offset.zero,
       surfaceSize: Size.zero,
       scale: 1,
+      bufferSourceBox: Rect.zero,
+      bufferSize: Size.zero,
       widgetKey: widgetKey,
       textureKey: textureKey,
       subsurfacesBelow: const <int>[],
@@ -83,6 +93,8 @@ class SurfaceController {
       surfacePosition: data.surfacePosition,
       surfaceSize: data.surfaceSize,
       scale: data.scale,
+      bufferSourceBox: data.bufferSourceBox,
+      bufferSize: data.bufferSize,
       widgetKey: state.widgetKey,
       textureKey: state.textureKey,
       subsurfacesBelow: data.subsurfacesBelow,

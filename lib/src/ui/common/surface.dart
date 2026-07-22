@@ -29,13 +29,23 @@ class Surface extends ConsumerWidget {
             viewId: viewId,
             child: Consumer(
               builder: (BuildContext context, WidgetRef ref, Widget? child) {
-                Key key = ref.watch(surfaceStatesProvider(viewId).select((v) => v.textureKey));
-                int textureId = ref.watch(surfaceStatesProvider(viewId).select((v) => v.textureId));
+                final textureKey = ref.watch(
+                    surfaceStatesProvider(viewId).select((v) => v.textureKey));
+                final textureId = ref.watch(
+                    surfaceStatesProvider(viewId).select((v) => v.textureId));
+                final surfaceSize = ref.watch(
+                    surfaceStatesProvider(viewId).select((v) => v.surfaceSize));
+                final bufferSourceBox = ref.watch(surfaceStatesProvider(viewId)
+                    .select((v) => v.bufferSourceBox));
+                final bufferSize = ref.watch(
+                    surfaceStatesProvider(viewId).select((v) => v.bufferSize));
 
-                return Texture(
-                  key: key,
-                  filterQuality: FilterQuality.medium,
+                return _SurfaceTexture(
+                  textureKey: textureKey,
                   textureId: textureId,
+                  surfaceSize: surfaceSize,
+                  bufferSourceBox: bufferSourceBox,
+                  bufferSize: bufferSize,
                 );
               },
             ),
@@ -50,12 +60,74 @@ class Surface extends ConsumerWidget {
   }
 }
 
+class _SurfaceTexture extends StatelessWidget {
+  final Key textureKey;
+  final int textureId;
+  final Size surfaceSize;
+  final Rect bufferSourceBox;
+  final Size bufferSize;
+
+  const _SurfaceTexture({
+    required this.textureKey,
+    required this.textureId,
+    required this.surfaceSize,
+    required this.bufferSourceBox,
+    required this.bufferSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (surfaceSize.isEmpty ||
+        bufferSize.isEmpty ||
+        bufferSourceBox.isEmpty ||
+        bufferSourceBox.width <= 0 ||
+        bufferSourceBox.height <= 0) {
+      return SizedBox.fromSize(
+        size: surfaceSize,
+        child: Texture(
+          key: textureKey,
+          filterQuality: FilterQuality.medium,
+          textureId: textureId,
+        ),
+      );
+    }
+
+    final scaleX = surfaceSize.width / bufferSourceBox.width;
+    final scaleY = surfaceSize.height / bufferSourceBox.height;
+    final scaledBufferSize = Size(
+      bufferSize.width * scaleX,
+      bufferSize.height * scaleY,
+    );
+
+    return SizedBox.fromSize(
+      size: surfaceSize,
+      child: ClipRect(
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: -bufferSourceBox.left * scaleX,
+              top: -bufferSourceBox.top * scaleY,
+              width: scaledBufferSize.width,
+              height: scaledBufferSize.height,
+              child: Texture(
+                key: textureKey,
+                filterQuality: FilterQuality.medium,
+                textureId: textureId,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Subsurfaces extends ConsumerWidget {
   final int viewId;
   final _SubsurfaceLayer layer;
 
   const _Subsurfaces({
-    super.key,
     required this.viewId,
     required this.layer,
   });
@@ -68,7 +140,8 @@ class _Subsurfaces extends ConsumerWidget {
 
     List<Widget> subsurfaces = ref
         .watch(surfaceStatesProvider(viewId).select(selector))
-        .where((id) => ref.watch(subsurfaceStatesProvider(id).select((ss) => ss.mapped)))
+        .where((id) =>
+            ref.watch(subsurfaceStatesProvider(id).select((ss) => ss.mapped)))
         .map((id) => Subsurface(viewId: id))
         .toList();
 

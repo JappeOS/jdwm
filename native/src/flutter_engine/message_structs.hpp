@@ -35,6 +35,12 @@ struct SubsurfaceParentState {
 	int32_t x, y;
 };
 
+struct SurfaceBufferSourceBox {
+	double x, y;
+	double width, height;
+	int buffer_width, buffer_height;
+};
+
 enum class ToplevelDecoration {
 	NONE = 0,
 	CLIENT_SIZE = 1,
@@ -50,6 +56,7 @@ struct SurfaceCommitMessage {
 		int x, y;
 		int width, height;
 		int32_t scale;
+		SurfaceBufferSourceBox source_box;
 		pixman_box32_t input_region;
 	} surface;
 	std::vector<SubsurfaceParentState> subsurfaces_below;

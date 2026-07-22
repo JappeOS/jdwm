@@ -24,6 +24,7 @@ extern "C" {
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_viewporter.h>
 #include <wlr/render/allocator.h>
 #include <wlr/backend/libinput.h>
 #include <wlr/backend/drm.h>
@@ -418,6 +419,11 @@ ZenithServer::ZenithServer() {
 	}
 	if (wlr_subcompositor_create(display) == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots subcompositor");
+		exit(4);
+	}
+	viewporter = wlr_viewporter_create(display);
+	if (viewporter == nullptr) {
+		wlr_log(WLR_ERROR, "Could not create wlroots viewporter");
 		exit(4);
 	}
 //	surface_destroyed.notify = server_surface_destroyed;

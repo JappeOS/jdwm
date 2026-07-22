@@ -38,6 +38,7 @@ extern "C" {
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/types/wlr_viewporter.h>
 #include <wlr/util/box.h>
 #undef static
 struct wlr_xwayland;
@@ -76,6 +77,7 @@ public:
 	wlr_data_device_manager* data_device_manager;
 	wlr_relative_pointer_manager_v1* relative_pointer_manager = nullptr;
 	wlr_pointer_constraints_v1* pointer_constraints = nullptr;
+	wlr_viewporter* viewporter = nullptr;
 
 	wlr_output_layout* output_layout;
 	wlr_scene* scene = nullptr;

@@ -15,6 +15,7 @@ extern "C" {
 #include "dma-buf.h"
 
 #define static
+#include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/render/gles2.h>
@@ -82,6 +83,9 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 		role = SurfaceRole::NONE;
 	}
 
+	wlr_fbox source_box = {};
+	wlr_surface_get_buffer_source_box(surface, &source_box);
+
 	commit_message->surface = {
 		  .role = role,
 		  .texture_id = (int) zenith_surface->id,
@@ -90,6 +94,14 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 		  .width = surface->current.width,
 		  .height = surface->current.height,
 		  .scale = surface->current.scale,
+		  .source_box = {
+				.x = source_box.x,
+				.y = source_box.y,
+				.width = source_box.width,
+				.height = source_box.height,
+				.buffer_width = surface->current.buffer_width,
+				.buffer_height = surface->current.buffer_height,
+		  },
 		  .input_region = surface->input_region.extents,
 	};
 

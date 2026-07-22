@@ -20,6 +20,8 @@ mixin _$SurfaceState {
   Offset get surfacePosition;
   Size get surfaceSize;
   double get scale;
+  Rect get bufferSourceBox;
+  Size get bufferSize;
   GlobalKey get widgetKey;
   GlobalKey get textureKey;
   List<int> get subsurfacesBelow;
@@ -48,6 +50,10 @@ mixin _$SurfaceState {
             (identical(other.surfaceSize, surfaceSize) ||
                 other.surfaceSize == surfaceSize) &&
             (identical(other.scale, scale) || other.scale == scale) &&
+            (identical(other.bufferSourceBox, bufferSourceBox) ||
+                other.bufferSourceBox == bufferSourceBox) &&
+            (identical(other.bufferSize, bufferSize) ||
+                other.bufferSize == bufferSize) &&
             (identical(other.widgetKey, widgetKey) ||
                 other.widgetKey == widgetKey) &&
             (identical(other.textureKey, textureKey) ||
@@ -69,6 +75,8 @@ mixin _$SurfaceState {
       surfacePosition,
       surfaceSize,
       scale,
+      bufferSourceBox,
+      bufferSize,
       widgetKey,
       textureKey,
       const DeepCollectionEquality().hash(subsurfacesBelow),
@@ -77,7 +85,7 @@ mixin _$SurfaceState {
 
   @override
   String toString() {
-    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion)';
+    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion)';
   }
 }
 
@@ -94,6 +102,8 @@ abstract mixin class $SurfaceStateCopyWith<$Res> {
       Offset surfacePosition,
       Size surfaceSize,
       double scale,
+      Rect bufferSourceBox,
+      Size bufferSize,
       GlobalKey widgetKey,
       GlobalKey textureKey,
       List<int> subsurfacesBelow,
@@ -119,6 +129,8 @@ class _$SurfaceStateCopyWithImpl<$Res> implements $SurfaceStateCopyWith<$Res> {
     Object? surfacePosition = null,
     Object? surfaceSize = null,
     Object? scale = null,
+    Object? bufferSourceBox = null,
+    Object? bufferSize = null,
     Object? widgetKey = null,
     Object? textureKey = null,
     Object? subsurfacesBelow = null,
@@ -150,6 +162,14 @@ class _$SurfaceStateCopyWithImpl<$Res> implements $SurfaceStateCopyWith<$Res> {
           ? _self.scale
           : scale // ignore: cast_nullable_to_non_nullable
               as double,
+      bufferSourceBox: null == bufferSourceBox
+          ? _self.bufferSourceBox
+          : bufferSourceBox // ignore: cast_nullable_to_non_nullable
+              as Rect,
+      bufferSize: null == bufferSize
+          ? _self.bufferSize
+          : bufferSize // ignore: cast_nullable_to_non_nullable
+              as Size,
       widgetKey: null == widgetKey
           ? _self.widgetKey
           : widgetKey // ignore: cast_nullable_to_non_nullable
@@ -274,6 +294,8 @@ extension SurfaceStatePatterns on SurfaceState {
             Offset surfacePosition,
             Size surfaceSize,
             double scale,
+            Rect bufferSourceBox,
+            Size bufferSize,
             GlobalKey widgetKey,
             GlobalKey textureKey,
             List<int> subsurfacesBelow,
@@ -292,6 +314,8 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.surfacePosition,
             _that.surfaceSize,
             _that.scale,
+            _that.bufferSourceBox,
+            _that.bufferSize,
             _that.widgetKey,
             _that.textureKey,
             _that.subsurfacesBelow,
@@ -324,6 +348,8 @@ extension SurfaceStatePatterns on SurfaceState {
             Offset surfacePosition,
             Size surfaceSize,
             double scale,
+            Rect bufferSourceBox,
+            Size bufferSize,
             GlobalKey widgetKey,
             GlobalKey textureKey,
             List<int> subsurfacesBelow,
@@ -341,6 +367,8 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.surfacePosition,
             _that.surfaceSize,
             _that.scale,
+            _that.bufferSourceBox,
+            _that.bufferSize,
             _that.widgetKey,
             _that.textureKey,
             _that.subsurfacesBelow,
@@ -372,6 +400,8 @@ extension SurfaceStatePatterns on SurfaceState {
             Offset surfacePosition,
             Size surfaceSize,
             double scale,
+            Rect bufferSourceBox,
+            Size bufferSize,
             GlobalKey widgetKey,
             GlobalKey textureKey,
             List<int> subsurfacesBelow,
@@ -389,6 +419,8 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.surfacePosition,
             _that.surfaceSize,
             _that.scale,
+            _that.bufferSourceBox,
+            _that.bufferSize,
             _that.widgetKey,
             _that.textureKey,
             _that.subsurfacesBelow,
@@ -410,6 +442,8 @@ class _SurfaceState implements SurfaceState {
       required this.surfacePosition,
       required this.surfaceSize,
       required this.scale,
+      required this.bufferSourceBox,
+      required this.bufferSize,
       required this.widgetKey,
       required this.textureKey,
       required final List<int> subsurfacesBelow,
@@ -430,6 +464,10 @@ class _SurfaceState implements SurfaceState {
   final Size surfaceSize;
   @override
   final double scale;
+  @override
+  final Rect bufferSourceBox;
+  @override
+  final Size bufferSize;
   @override
   final GlobalKey widgetKey;
   @override
@@ -477,6 +515,10 @@ class _SurfaceState implements SurfaceState {
             (identical(other.surfaceSize, surfaceSize) ||
                 other.surfaceSize == surfaceSize) &&
             (identical(other.scale, scale) || other.scale == scale) &&
+            (identical(other.bufferSourceBox, bufferSourceBox) ||
+                other.bufferSourceBox == bufferSourceBox) &&
+            (identical(other.bufferSize, bufferSize) ||
+                other.bufferSize == bufferSize) &&
             (identical(other.widgetKey, widgetKey) ||
                 other.widgetKey == widgetKey) &&
             (identical(other.textureKey, textureKey) ||
@@ -498,6 +540,8 @@ class _SurfaceState implements SurfaceState {
       surfacePosition,
       surfaceSize,
       scale,
+      bufferSourceBox,
+      bufferSize,
       widgetKey,
       textureKey,
       const DeepCollectionEquality().hash(_subsurfacesBelow),
@@ -506,7 +550,7 @@ class _SurfaceState implements SurfaceState {
 
   @override
   String toString() {
-    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion)';
+    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion)';
   }
 }
 
@@ -525,6 +569,8 @@ abstract mixin class _$SurfaceStateCopyWith<$Res>
       Offset surfacePosition,
       Size surfaceSize,
       double scale,
+      Rect bufferSourceBox,
+      Size bufferSize,
       GlobalKey widgetKey,
       GlobalKey textureKey,
       List<int> subsurfacesBelow,
@@ -551,6 +597,8 @@ class __$SurfaceStateCopyWithImpl<$Res>
     Object? surfacePosition = null,
     Object? surfaceSize = null,
     Object? scale = null,
+    Object? bufferSourceBox = null,
+    Object? bufferSize = null,
     Object? widgetKey = null,
     Object? textureKey = null,
     Object? subsurfacesBelow = null,
@@ -582,6 +630,14 @@ class __$SurfaceStateCopyWithImpl<$Res>
           ? _self.scale
           : scale // ignore: cast_nullable_to_non_nullable
               as double,
+      bufferSourceBox: null == bufferSourceBox
+          ? _self.bufferSourceBox
+          : bufferSourceBox // ignore: cast_nullable_to_non_nullable
+              as Rect,
+      bufferSize: null == bufferSize
+          ? _self.bufferSize
+          : bufferSize // ignore: cast_nullable_to_non_nullable
+              as Size,
       widgetKey: null == widgetKey
           ? _self.widgetKey
           : widgetKey // ignore: cast_nullable_to_non_nullable

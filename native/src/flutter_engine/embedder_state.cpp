@@ -556,6 +556,14 @@ void EmbedderState::commit_surface(const SurfaceCommitMessage& message) {
 					{EncodableValue("width"),             EncodableValue(message.surface.width)},
 					{EncodableValue("height"),            EncodableValue(message.surface.height)},
 					{EncodableValue("scale"),             EncodableValue(message.surface.scale)},
+					{EncodableValue("source_box"),        EncodableValue(EncodableMap{
+						  {EncodableValue("x"),             EncodableValue(message.surface.source_box.x)},
+						  {EncodableValue("y"),             EncodableValue(message.surface.source_box.y)},
+						  {EncodableValue("width"),         EncodableValue(message.surface.source_box.width)},
+						  {EncodableValue("height"),        EncodableValue(message.surface.source_box.height)},
+						  {EncodableValue("buffer_width"),  EncodableValue((int64_t) message.surface.source_box.buffer_width)},
+						  {EncodableValue("buffer_height"), EncodableValue((int64_t) message.surface.source_box.buffer_height)},
+					})},
 					{EncodableValue("subsurfaces_below"), EncodableValue(std::move(subsurfaces_below))},
 					{EncodableValue("subsurfaces_above"), EncodableValue(std::move(subsurfaces_above))},
 					{EncodableValue("input_region"),      EncodableValue(EncodableMap{
