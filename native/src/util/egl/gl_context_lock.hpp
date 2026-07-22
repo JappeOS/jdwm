@@ -8,6 +8,7 @@ void set_gl_context_serialization_enabled(bool enabled);
 bool gl_context_serialization_enabled();
 void set_flutter_frame_rendering_active(bool active);
 bool flutter_frame_rendering_active();
+bool should_defer_for_flutter_frame_rendering();
 std::recursive_mutex& gl_context_mutex();
 bool lock_gl_context();
 void unlock_gl_context();

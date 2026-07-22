@@ -469,12 +469,11 @@ void output_frame(wl_listener* listener, void* data) {
 
 	bool output_committed = false;
 	{
-		if (zenith::egl::gl_context_serialization_enabled() &&
-		    zenith::egl::flutter_frame_rendering_active()) {
+		if (zenith::egl::should_defer_for_flutter_frame_rendering()) {
 			if (log_this_frame) {
 				wlr_log(WLR_INFO, "zenith:output frame skipped: Flutter FBO render active");
 			}
-			wl_event_source_timer_update(output->schedule_frame_timer, 1);
+			wl_event_source_timer_update(output->schedule_frame_timer, 16);
 			return;
 		}
 		zenith::egl::TryGlContextGuard gl_guard;
@@ -482,7 +481,7 @@ void output_frame(wl_listener* listener, void* data) {
 			if (log_this_frame) {
 				wlr_log(WLR_INFO, "zenith:output frame skipped: GL serialization busy");
 			}
-			wl_event_source_timer_update(output->schedule_frame_timer, 1);
+			wl_event_source_timer_update(output->schedule_frame_timer, 16);
 			return;
 		}
 		output_committed = wlr_scene_output_commit(output->scene_output, nullptr);
