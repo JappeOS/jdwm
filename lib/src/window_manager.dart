@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/core/models/toplevel_decoration.dart';
+import 'package:jdwm/src/util/backend_surface_geometry.dart';
 
 import '../zenith_backend.dart';
 import 'client_cursor.dart';
@@ -425,42 +427,33 @@ class WindowManagerState extends State<WindowManager> {
       _backendContainer!.listen(
         xdgSurfaceStatesProvider(viewId).select((v) => v.visibleBounds),
         (previous, next) {
-          if (next.size.isEmpty) {
+          if (_backendUsesSurfaceDestinationSize(viewId)) {
             return;
           }
-          final current = entry.windowRect;
-          var left = current.left;
-          var top = current.top;
-
-          final edge = entry.backendInteractiveResizeEdge;
-          if (edge != null &&
-              previous != null &&
-              previous.size.isEmpty == false) {
-            final offset = _computeWindowOffset(edge, previous.size, next.size);
-            left += offset.dx;
-            top += offset.dy;
-          }
-
-          final nextRect = Rect.fromLTWH(
-            left,
-            top,
-            next.width,
-            next.height,
+          _applyBackendWindowSizeUpdate(
+            viewId,
+            entry,
+            previousSize: previous?.size,
+            nextSize: next.size,
           );
-          if (!_backendInitialPlacementDone.contains(viewId)) {
-            final placed =
-                _applyInitialBackendWindowPlacement(entry, size: nextRect.size);
-            if (placed) {
-              _backendInitialPlacementDone.add(viewId);
-              syncBackendWindowGeometry(entry, force: true);
-              return;
-            }
+        },
+        fireImmediately: true,
+      ),
+    );
+
+    subs.add(
+      _backendContainer!.listen(
+        surfaceStatesProvider(viewId).select((v) => v.surfaceSize),
+        (previous, next) {
+          if (!_backendUsesSurfaceDestinationSize(viewId)) {
+            return;
           }
-          // Keep initial spawn placement constrained to monitor bounds, but
-          // do not continuously clamp subsequent backend geometry updates.
-          // Continuous clamping breaks cross-monitor interactive resize/move.
-          entry.windowRect = nextRect;
-          _notifyWindowStateListeners();
+          _applyBackendWindowSizeUpdate(
+            viewId,
+            entry,
+            previousSize: previous,
+            nextSize: next,
+          );
         },
         fireImmediately: true,
       ),
@@ -485,9 +478,75 @@ class WindowManagerState extends State<WindowManager> {
   }
 
   Rect _backendViewportRectForEntry(int viewId) {
-    return _backendContainer!
-        .read(xdgSurfaceStatesProvider(viewId))
-        .visibleBounds;
+    if (_backendContainer == null) {
+      return Rect.zero;
+    }
+    final surface = _backendContainer!.read(surfaceStatesProvider(viewId));
+    final visibleBounds =
+        _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
+    return backendManagedSurfaceRect(
+      surfaceSize: surface.surfaceSize,
+      visibleBounds: visibleBounds,
+      bufferSourceBox: surface.bufferSourceBox,
+      bufferSize: surface.bufferSize,
+    );
+  }
+
+  void _applyBackendWindowSizeUpdate(
+    int viewId,
+    WindowEntry entry, {
+    required Size? previousSize,
+    required Size nextSize,
+  }) {
+    if (nextSize.isEmpty) {
+      return;
+    }
+    final current = entry.windowRect;
+    var left = current.left;
+    var top = current.top;
+
+    final edge = entry.backendInteractiveResizeEdge;
+    if (edge != null && previousSize != null && !previousSize.isEmpty) {
+      final offset = _computeWindowOffset(edge, previousSize, nextSize);
+      left += offset.dx;
+      top += offset.dy;
+    }
+
+    final nextRect = Rect.fromLTWH(
+      left,
+      top,
+      nextSize.width,
+      nextSize.height,
+    );
+    if (!_backendInitialPlacementDone.contains(viewId)) {
+      final placed =
+          _applyInitialBackendWindowPlacement(entry, size: nextRect.size);
+      if (placed) {
+        _backendInitialPlacementDone.add(viewId);
+        syncBackendWindowGeometry(entry, force: true);
+        return;
+      }
+    }
+    // Keep initial spawn placement constrained to monitor bounds, but
+    // do not continuously clamp subsequent backend geometry updates.
+    // Continuous clamping breaks cross-monitor interactive resize/move.
+    entry.windowRect = nextRect;
+    _notifyWindowStateListeners();
+  }
+
+  bool _backendUsesSurfaceDestinationSize(int viewId) {
+    if (_backendContainer == null) {
+      return false;
+    }
+    final surface = _backendContainer!.read(surfaceStatesProvider(viewId));
+    final visibleBounds =
+        _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
+    return backendUsesSurfaceDestinationSize(
+      surfaceSize: surface.surfaceSize,
+      visibleBounds: visibleBounds,
+      bufferSourceBox: surface.bufferSourceBox,
+      bufferSize: surface.bufferSize,
+    );
   }
 
   Offset _computeWindowOffset(ResizeEdge edge, Size oldSize, Size newSize) {

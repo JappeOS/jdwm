@@ -15,10 +15,10 @@ class ViewInputListener extends ConsumerStatefulWidget {
   final Widget child;
 
   const ViewInputListener({
-    Key? key,
+    super.key,
     required this.viewId,
     required this.child,
-  }) : super(key: key);
+  });
 
   @override
   ConsumerState<ViewInputListener> createState() => _ViewInputListenerState();
@@ -46,11 +46,13 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
     );
     // Prefer compositor-visible bounds for hit-testing. Some X11/Xwayland apps
     // expose input regions that don't match the actual rendered surface.
-    final eventRegion = isXwaylandView
+    final candidateEventRegion = isXwaylandView
         ? fullSurfaceRegion
         : (visibleBounds.size.isEmpty
             ? (inputRegion.size.isEmpty ? fullSurfaceRegion : inputRegion)
             : visibleBounds);
+    final eventRegion =
+        _clampEventRegionToSurface(candidateEventRegion, fullSurfaceRegion);
 
     return Stack(
       clipBehavior: Clip.none,
@@ -101,6 +103,15 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
         ),
       ],
     );
+  }
+
+  Rect _clampEventRegionToSurface(Rect eventRegion, Rect surfaceRegion) {
+    if (eventRegion.size.isEmpty ||
+        surfaceRegion.size.isEmpty ||
+        !eventRegion.overlaps(surfaceRegion)) {
+      return Rect.zero;
+    }
+    return eventRegion.intersect(surfaceRegion);
   }
 
   Future<void> _onPointerDown(

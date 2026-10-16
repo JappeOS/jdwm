@@ -498,13 +498,19 @@ void EmbedderState::send_key_event(const KeyboardKeyEventMessage& message) {
 
 void EmbedderState::register_external_texture(int64_t id) {
 	callable_queue.enqueue([=] {
-		FlutterEngineRegisterExternalTexture(engine, id);
+		auto result = FlutterEngineRegisterExternalTexture(engine, id);
+		if (result != kSuccess) {
+			wlr_log(WLR_ERROR, "zenith: registering texture %lld failed (%d)", (long long) id, result);
+		}
 	});
 }
 
 void EmbedderState::mark_external_texture_frame_available(int64_t id) {
 	callable_queue.enqueue([=] {
-		FlutterEngineMarkExternalTextureFrameAvailable(engine, id);
+		auto result = FlutterEngineMarkExternalTextureFrameAvailable(engine, id);
+		if (result != kSuccess) {
+			wlr_log(WLR_ERROR, "zenith: notifying texture %lld failed (%d)", (long long) id, result);
+		}
 	});
 }
 

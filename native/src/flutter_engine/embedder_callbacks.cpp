@@ -11,6 +11,7 @@ extern "C" {
 #include <EGL/eglext.h>
 #include <wlr/render/egl.h>
 #include <wlr/render/gles2.h>
+#include <wlr/render/wlr_texture.h>
 #include <wlr/util/log.h>
 // Private wlroots headers for wlr_egl_make_current/wlr_egl_unset_current
 #include <render/egl.h>
@@ -18,6 +19,7 @@ extern "C" {
 
 #include <cassert>
 #include <atomic>
+#include <cstdlib>
 #include <iostream>
 #include <sys/eventfd.h>
 #include <unistd.h>
@@ -158,7 +160,13 @@ bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_
 	auto* state = static_cast<EmbedderState*>(userdata);
 	ZenithServer* server = ZenithServer::instance();
 	const int64_t& view_id = texture_id;
-	channel<wlr_gles2_texture_attribs> texture_attribs{};
+	struct TextureFrame {
+		wlr_gles2_texture_attribs attribs{};
+		size_t width = 0;
+		size_t height = 0;
+		std::shared_ptr<wlr_buffer>* buffer = nullptr;
+	};
+	channel<TextureFrame> texture_frames{};
 
 	server->callable_queue.enqueue([&]() {
 		std::scoped_lock lock(state->buffer_chains_mutex);
@@ -178,44 +186,58 @@ bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_
 		const auto& client_chain = find_client_chain();
 
 		if (client_chain == nullptr) {
-			texture_attribs.write({});
+			wlr_log(WLR_ERROR, "zenith: no buffer chain for texture %lld", (long long) view_id);
+			texture_frames.write({});
 			return;
 		}
 
-		wlr_buffer* buffer = client_chain->start_read();
-		assert(buffer != nullptr);
+		auto buffer = client_chain->start_read();
+		auto* client_buffer = buffer ? wlr_client_buffer_get(buffer.get()) : nullptr;
+		wlr_texture* texture = client_buffer ? client_buffer->texture : nullptr;
+		if (texture == nullptr || !wlr_texture_is_gles2(texture)) {
+			wlr_log(WLR_ERROR, "zenith: no GLES texture for surface %lld", (long long) view_id);
+			texture_frames.write({});
+			return;
+		}
 
-		wlr_texture* texture = wlr_client_buffer_get(buffer)->texture;
-		assert(texture != nullptr);
-
-		wlr_gles2_texture_attribs attribs{};
-		wlr_gles2_texture_get_attribs(texture, &attribs);
-		texture_attribs.write(attribs);
+		TextureFrame frame{};
+		wlr_gles2_texture_get_attribs(texture, &frame.attribs);
+		if (frame.attribs.tex != 0 && texture->width > 0 && texture->height > 0) {
+			frame.width = texture->width;
+			frame.height = texture->height;
+			frame.buffer = new std::shared_ptr<wlr_buffer>(std::move(buffer));
+		}
+		texture_frames.write(frame);
 		return;
 	});
 
-	wlr_gles2_texture_attribs attribs = texture_attribs.read();
-	if (attribs.tex == 0) {
+	TextureFrame frame = texture_frames.read();
+	if (frame.buffer == nullptr) {
 		return false;
 	}
+	static const bool trace_textures = std::getenv("ZENITH_TRACE_TEXTURES") != nullptr;
+	if (trace_textures) {
+		wlr_log(WLR_INFO,
+		        "zenith:texture id=%lld name=%u target=0x%x buffer=%zux%zu requested=%zux%zu shared=%d",
+		        (long long) view_id, frame.attribs.tex, frame.attribs.target,
+		        frame.width, frame.height, width, height, glIsTexture(frame.attribs.tex));
+	}
 
-	texture_out->target = attribs.target;
+	texture_out->target = frame.attribs.target;
 	texture_out->format = GL_RGBA8;
-	texture_out->name = attribs.tex;
-	texture_out->user_data = (void*) view_id;
+	texture_out->name = frame.attribs.tex;
+	// Flutter's requested size is the widget's size, not the buffer's pixel size
+	// (especially with buffer scale or wp_viewporter).
+	texture_out->width = frame.width;
+	texture_out->height = frame.height;
+	texture_out->user_data = frame.buffer;
 
 	texture_out->destruction_callback = [](void* user_data) {
 		auto* server = ZenithServer::instance();
-		auto view_id = reinterpret_cast<int64_t>(user_data);
+		auto* buffer = static_cast<std::shared_ptr<wlr_buffer>*>(user_data);
+		// wlroots buffer unlock/destruction must run on the Wayland thread.
 		server->callable_queue.enqueue([=]() {
-			std::scoped_lock lock(server->embedder_state->buffer_chains_mutex);
-
-			auto& buffer_chains_in_use = server->embedder_state->buffer_chains_in_use;
-
-			auto it = buffer_chains_in_use.find(view_id);
-			if (it != buffer_chains_in_use.end()) {
-				it->second->end_read();
-			}
+			delete buffer;
 		});
 	};
 

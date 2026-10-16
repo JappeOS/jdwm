@@ -1,19 +1,14 @@
 #pragma once
 
+#include <cassert>
 #include <memory>
-
-extern "C" {
-#include <wlr/types/wlr_buffer.h>
-}
 
 template<class T>
 struct SurfaceBufferChain {
-	std::shared_ptr<T> render_buffer = {};
 	std::shared_ptr<T> newest_buffer = {};
 
-	[[nodiscard]] T* start_read();
-
-	void end_read();
+	// Each reader owns its frame until that specific frame is released.
+	[[nodiscard]] std::shared_ptr<T> start_read();
 
 	void commit_buffer(std::shared_ptr<T> buffer);
 

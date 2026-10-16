@@ -6,16 +6,9 @@
 bool is_main_thread();
 
 template<class T>
-T* SurfaceBufferChain<T>::start_read() {
+std::shared_ptr<T> SurfaceBufferChain<T>::start_read() {
 	assert(is_main_thread());
-	render_buffer = newest_buffer;
-	return render_buffer.get();
-}
-
-template<class T>
-void SurfaceBufferChain<T>::end_read() {
-	assert(is_main_thread());
-	render_buffer = nullptr;
+	return newest_buffer;
 }
 
 template<class T>
@@ -27,6 +20,5 @@ void SurfaceBufferChain<T>::commit_buffer(std::shared_ptr<T> buffer) {
 template<class T>
 SurfaceBufferChain<T>::~SurfaceBufferChain() {
 	assert(is_main_thread());
-	render_buffer = nullptr;
 	newest_buffer = nullptr;
 }

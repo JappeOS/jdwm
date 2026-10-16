@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart' as provider_pkg hide Consumer;
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
+import 'package:jdwm/src/util/backend_surface_geometry.dart';
 import 'package:jdwm/src/util/rect_overflow_box.dart';
 
 import 'window_manager.dart';
@@ -495,7 +497,21 @@ class _WindowState extends State<Window> {
 
   Rect _backendViewportRectFromRef(
       WidgetRef ref, WindowEntry entry, int viewId) {
-    return ref.watch(xdgSurfaceStatesProvider(viewId)).visibleBounds;
+    final visibleBounds = ref
+        .watch(xdgSurfaceStatesProvider(viewId).select((v) => v.visibleBounds));
+    final surfaceSize =
+        ref.watch(surfaceStatesProvider(viewId).select((v) => v.surfaceSize));
+    final bufferSourceBox = ref
+        .watch(surfaceStatesProvider(viewId).select((v) => v.bufferSourceBox));
+    final bufferSize =
+        ref.watch(surfaceStatesProvider(viewId).select((v) => v.bufferSize));
+    final managedRect = backendManagedSurfaceRect(
+      surfaceSize: surfaceSize,
+      visibleBounds: visibleBounds,
+      bufferSourceBox: bufferSourceBox,
+      bufferSize: bufferSize,
+    );
+    return managedRect.size.isEmpty ? visibleBounds : managedRect;
   }
 
   @override
@@ -682,8 +698,7 @@ class _WindowState extends State<Window> {
     return DualBorderOutlinedContainer(
       key: _mainContainerKey,
       hasBorder: hasBorder,
-      borderRadius:
-          hasBorder ? theme.borderRadiusLg : BorderRadius.zero,
+      borderRadius: hasBorder ? theme.borderRadiusLg : BorderRadius.zero,
       surfaceBlur: theme.surfaceBlur,
       surfaceOpacity: theme.surfaceOpacity,
       boxShadow: hasBorder && isFocused
