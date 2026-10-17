@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <pixman-1/pixman.h>
 #include <vector>
 #include <optional>
