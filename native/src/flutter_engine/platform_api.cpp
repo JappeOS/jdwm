@@ -203,13 +203,13 @@ void pointer_exit(ZenithServer* server,
 			if (zenith_cursor_debug_enabled()) {
 				wlr_log(
 					WLR_INFO,
-					"zenith:cursor pointer_exit restore default visible=%d forced_hidden=%d current=%s",
+					"zenith:cursor pointer_exit restore compositor visible=%d forced_hidden=%d current=%s",
 					server->pointer->is_visible() ? 1 : 0,
 					server->pointer->is_forced_hidden() ? 1 : 0,
 					server->pointer->current_cursor_name()
 				);
 			}
-			server->pointer->set_cursor_name("left_ptr");
+			server->pointer->restore_compositor_cursor();
 		}
 	});
 	result->Success();

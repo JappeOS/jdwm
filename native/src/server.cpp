@@ -777,8 +777,7 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 		if (server->pointer != nullptr && server->pointer->is_visible()) {
 			if (event->surface != nullptr) {
 				if (event->surface->mapped) {
-					wlr_cursor_set_surface(
-						server->pointer->cursor,
+					server->pointer->set_client_cursor(
 						event->surface,
 						event->hotspot_x,
 						event->hotspot_y
@@ -788,15 +787,15 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 					if (zenith_cursor_debug_enabled()) {
 						wlr_log(WLR_INFO, "zenith:cursor request_set_cursor ignored unmapped surface");
 					}
-					server->pointer->restore_default_cursor();
+					server->pointer->restore_compositor_cursor();
 				}
 			} else {
 				// Some clients may request a null cursor surface during teardown.
 				// Keep compositor cursor visible unless explicitly hidden by JDWM.
 				if (zenith_cursor_debug_enabled()) {
-					wlr_log(WLR_INFO, "zenith:cursor request_set_cursor null surface -> restore default");
+					wlr_log(WLR_INFO, "zenith:cursor request_set_cursor null surface -> restore compositor");
 				}
-				server->pointer->restore_default_cursor();
+				server->pointer->restore_compositor_cursor();
 			}
 			// If this is a software cursor, it becomes visible on the next rendered frame.
 			server->output_manager->schedule_cursor_frame(

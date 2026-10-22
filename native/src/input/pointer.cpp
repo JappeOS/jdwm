@@ -56,6 +56,8 @@ void ZenithPointer::set_visible(bool value) {
 		return;
 	}
 	visible = value;
+	wl_list_remove(&client_cursor_destroy.link);
+	wl_list_init(&client_cursor_destroy.link);
 	if (zenith_cursor_debug_enabled()) {
 		wlr_log(
 			WLR_INFO,
@@ -102,6 +104,8 @@ void ZenithPointer::reveal_from_input_activity() {
 }
 
 void ZenithPointer::set_cursor_name(const char* value) {
+	wl_list_remove(&client_cursor_destroy.link);
+	wl_list_init(&client_cursor_destroy.link);
 	const char* next = (value != nullptr && value[0] != '\0') ? value : "left_ptr";
 	if (cursor_name == next) {
 		// Cursor source may currently be a client-provided surface. Re-apply
@@ -152,12 +156,46 @@ void ZenithPointer::set_client_locked(bool value) {
 	client_lock = value;
 }
 
-void ZenithPointer::restore_default_cursor() {
-	set_cursor_name("left_ptr");
+void ZenithPointer::restore_compositor_cursor() {
+	// Flutter may already have selected a resize cursor before the deferred
+	// pointer_exit arrives. Restore that selection without resetting its name.
+	set_cursor_name(cursor_name.c_str());
+}
+
+void ZenithPointer::set_client_cursor(wlr_surface* surface, int32_t hotspot_x, int32_t hotspot_y) {
+	wl_list_remove(&client_cursor_destroy.link);
+	wl_list_init(&client_cursor_destroy.link);
+	wlr_cursor_set_surface(cursor, surface, hotspot_x, hotspot_y);
+	if (surface != nullptr) {
+		// Register after wlroots: its destroy handler clears the image first.
+		// Our handler then restores it, even if Flutter's cursor kind is unchanged.
+		wl_signal_add(&surface->events.destroy, &client_cursor_destroy);
+	}
 }
 
 ZenithPointer::ZenithPointer(ZenithServer* server)
 	  : server(server) {
+	wl_list_init(&client_cursor_destroy.link);
+	client_cursor_destroy.notify = [](wl_listener* listener, void*) {
+		ZenithPointer* pointer = wl_container_of(listener, pointer, client_cursor_destroy);
+		pointer->restore_compositor_cursor();
+	};
+	pointer_focus_change.notify = [](wl_listener* listener, void* data) {
+		ZenithPointer* pointer = wl_container_of(listener, pointer, pointer_focus_change);
+		auto* event = static_cast<wlr_seat_pointer_focus_change_event*>(data);
+		if (event->new_surface == nullptr) {
+			pointer->restore_compositor_cursor();
+		}
+	};
+	wl_signal_add(&server->seat->pointer_state.events.focus_change, &pointer_focus_change);
+	seat_destroy.notify = [](wl_listener* listener, void*) {
+		ZenithPointer* pointer = wl_container_of(listener, pointer, seat_destroy);
+		wl_list_remove(&pointer->pointer_focus_change.link);
+		wl_list_remove(&pointer->client_cursor_destroy.link);
+		wl_list_init(&pointer->client_cursor_destroy.link);
+		wl_list_remove(&pointer->seat_destroy.link);
+	};
+	wl_signal_add(&server->seat->events.destroy, &seat_destroy);
 	/*
 	 * Creates a cursor, which is a wlroots utility for tracking the cursor
 	 * image shown on screen.

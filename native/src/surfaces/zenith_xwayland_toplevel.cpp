@@ -14,7 +14,7 @@ extern "C" {
 #undef class
 }
 
-static bool pointer_focus_belongs_to_same_client(
+static bool pointer_focus_belongs_to_surface(
 	ZenithServer* server,
 	wlr_surface* surface
 ) {
@@ -25,12 +25,9 @@ static bool pointer_focus_belongs_to_same_client(
 	if (focused_surface == nullptr) {
 		return false;
 	}
-	if (surface->resource == nullptr || focused_surface->resource == nullptr) {
-		return false;
-	}
-	wl_client* surface_client = wl_resource_get_client(surface->resource);
-	wl_client* focused_client = wl_resource_get_client(focused_surface->resource);
-	return surface_client != nullptr && surface_client == focused_client;
+	// Xwayland shares one wl_client across all X11 windows. Only clear
+	// focus for this surface (or one of its subsurfaces), not another window.
+	return wlr_surface_get_root_surface(focused_surface) == surface;
 }
 
 static int managed_x_for(const ZenithXwaylandToplevel* toplevel) {
@@ -350,25 +347,12 @@ void ZenithXwaylandToplevel::handle_unmap() {
 				text_input->leave();
 			}
 		}
-		if (pointer_focus_belongs_to_same_client(server, surface)) {
+		if (pointer_focus_belongs_to_surface(server, surface)) {
 			if (zenith_cursor_debug_enabled()) {
-				wlr_log(WLR_INFO, "zenith:cursor xwayland_unmap clear pointer focus by client match view=%zu", view_id);
+				wlr_log(WLR_INFO, "zenith:cursor xwayland_unmap clear pointer focus by surface match view=%zu", view_id);
 			}
 			wlr_seat_pointer_notify_clear_focus(server->seat);
 		}
-	}
-	if (server->pointer != nullptr && server->pointer->is_visible()) {
-		// Prevent stale client cursor surfaces from a just-unmapped window.
-		if (zenith_cursor_debug_enabled()) {
-			wlr_log(
-				WLR_INFO,
-				"zenith:cursor xwayland_unmap restore default view=%zu forced_hidden=%d cursor=%s",
-				view_id,
-				server->pointer->is_forced_hidden() ? 1 : 0,
-				server->pointer->current_cursor_name()
-			);
-		}
-		server->pointer->restore_default_cursor();
 	}
 
 	if (is_mapped && registered && managed()) {

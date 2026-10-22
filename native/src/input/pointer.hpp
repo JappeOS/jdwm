@@ -27,6 +27,9 @@ struct ZenithPointer {
 	wl_listener cursor_button{};
 	wl_listener cursor_axis{};
 	wl_listener cursor_frame{};
+	wl_listener pointer_focus_change{};
+	wl_listener seat_destroy{};
+	wl_listener client_cursor_destroy{};
 
 private:
 	bool visible = true;
@@ -58,7 +61,8 @@ private:
 		void set_cursor_name(const char* value);
 		void set_manual_locked(bool value);
 		void set_client_locked(bool value);
-		void restore_default_cursor();
+		void restore_compositor_cursor();
+		void set_client_cursor(wlr_surface* surface, int32_t hotspot_x, int32_t hotspot_y);
 };
 
 /*
