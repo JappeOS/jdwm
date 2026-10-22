@@ -19,6 +19,7 @@ extern "C" {
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/render/gles2.h>
+#include <wlr/render/wlr_texture.h>
 #include <wlr/util/log.h>
 #define class wlroots_xwayland_class
 #include <wlr/xwayland/xwayland.h>
@@ -279,6 +280,7 @@ void zenith_surface_destroy(wl_listener* listener, void* data) {
 	wl_list_remove(&zenith_surface->destroy.link);
 
 	server->surface_buffer_chains.erase(zenith_surface->id);
+	server->embedder_state->external_textures.surface_destroyed(zenith_surface->id);
 	bool erased = server->surfaces.erase(zenith_surface->id);
 	assert(erased);
 	// TODO: Send destroy to Flutter.
@@ -391,6 +393,29 @@ void commit_surface(SurfaceCommitMessage* commit_message) {
 	}
 
 	buffer_chain->commit_buffer(std::move(commit_message->buffer));
+	// This runs after the client's fence is ready. Resolve wlroots metadata
+	// here so the raster thread never has to synchronously call into Wayland.
+	auto buffer = buffer_chain->start_read();
+	auto* client_buffer = buffer ? wlr_client_buffer_get(buffer.get()) : nullptr;
+	auto* texture = client_buffer ? client_buffer->texture : nullptr;
+	if (texture != nullptr && wlr_texture_is_gles2(texture)) {
+		wlr_gles2_texture_attribs attribs{};
+		wlr_gles2_texture_get_attribs(texture, &attribs);
+		if (attribs.tex != 0 && texture->width > 0 && texture->height > 0) {
+			auto frame = std::shared_ptr<const ExternalTextureFrame>(
+				new ExternalTextureFrame{attribs.target, attribs.tex,
+					static_cast<size_t>(texture->width), static_cast<size_t>(texture->height),
+					std::move(buffer)},
+				[server](const ExternalTextureFrame* frame) {
+					if (is_main_thread()) {
+						delete frame;
+					} else {
+						server->callable_queue.enqueue([frame] { delete frame; });
+					}
+				});
+			server->embedder_state->external_textures.publish(id, std::move(frame));
+		}
+	}
 	server->embedder_state->mark_external_texture_frame_available((int64_t) id);
 	server->embedder_state->commit_surface(*commit_message);
 

@@ -158,87 +158,32 @@ void flutter_vsync_callback(void* userdata, intptr_t baton) {
 bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_id, size_t width, size_t height,
                                                 FlutterOpenGLTexture* texture_out) {
 	auto* state = static_cast<EmbedderState*>(userdata);
-	ZenithServer* server = ZenithServer::instance();
-	const int64_t& view_id = texture_id;
-	struct TextureFrame {
-		wlr_gles2_texture_attribs attribs{};
-		size_t width = 0;
-		size_t height = 0;
-		std::shared_ptr<wlr_buffer>* buffer = nullptr;
-	};
-	channel<TextureFrame> texture_frames{};
-
-	server->callable_queue.enqueue([&]() {
-		std::scoped_lock lock(state->buffer_chains_mutex);
-		auto find_client_chain = [&]() -> std::shared_ptr<SurfaceBufferChain<wlr_buffer>> {
-			auto it = state->buffer_chains_in_use.find(view_id);
-			if (it != state->buffer_chains_in_use.end()) {
-				return it->second;
-			}
-			it = server->surface_buffer_chains.find(view_id);
-			if (it != server->surface_buffer_chains.end()) {
-				state->buffer_chains_in_use[view_id] = it->second;
-				return it->second;
-			}
-			return nullptr;
-		};
-
-		const auto& client_chain = find_client_chain();
-
-		if (client_chain == nullptr) {
-			wlr_log(WLR_ERROR, "zenith: no buffer chain for texture %lld", (long long) view_id);
-			texture_frames.write({});
-			return;
-		}
-
-		auto buffer = client_chain->start_read();
-		auto* client_buffer = buffer ? wlr_client_buffer_get(buffer.get()) : nullptr;
-		wlr_texture* texture = client_buffer ? client_buffer->texture : nullptr;
-		if (texture == nullptr || !wlr_texture_is_gles2(texture)) {
-			wlr_log(WLR_ERROR, "zenith: no GLES texture for surface %lld", (long long) view_id);
-			texture_frames.write({});
-			return;
-		}
-
-		TextureFrame frame{};
-		wlr_gles2_texture_get_attribs(texture, &frame.attribs);
-		if (frame.attribs.tex != 0 && texture->width > 0 && texture->height > 0) {
-			frame.width = texture->width;
-			frame.height = texture->height;
-			frame.buffer = new std::shared_ptr<wlr_buffer>(std::move(buffer));
-		}
-		texture_frames.write(frame);
-		return;
-	});
-
-	TextureFrame frame = texture_frames.read();
-	if (frame.buffer == nullptr) {
+	// Snapshot acquisition does not wait for the Wayland event loop. Each
+	// frame owns its buffer until Flutter releases this particular image.
+	auto frame = state->external_textures.acquire(texture_id);
+	if (!frame) {
 		return false;
 	}
 	static const bool trace_textures = std::getenv("ZENITH_TRACE_TEXTURES") != nullptr;
 	if (trace_textures) {
 		wlr_log(WLR_INFO,
 		        "zenith:texture id=%lld name=%u target=0x%x buffer=%zux%zu requested=%zux%zu shared=%d",
-		        (long long) view_id, frame.attribs.tex, frame.attribs.target,
-		        frame.width, frame.height, width, height, glIsTexture(frame.attribs.tex));
+		        (long long) texture_id, frame->name, frame->target,
+		        frame->width, frame->height, width, height, glIsTexture(frame->name));
 	}
 
-	texture_out->target = frame.attribs.target;
+	texture_out->target = frame->target;
 	texture_out->format = GL_RGBA8;
-	texture_out->name = frame.attribs.tex;
+	texture_out->name = frame->name;
 	// Flutter's requested size is the widget's size, not the buffer's pixel size
 	// (especially with buffer scale or wp_viewporter).
-	texture_out->width = frame.width;
-	texture_out->height = frame.height;
-	texture_out->user_data = frame.buffer;
+	texture_out->width = frame->width;
+	texture_out->height = frame->height;
+	texture_out->user_data = new ExternalTextureRegistry::Frame(std::move(frame));
 
 	texture_out->destruction_callback = [](void* user_data) {
-		auto* server = ZenithServer::instance();
-		auto* buffer = static_cast<std::shared_ptr<wlr_buffer>*>(user_data);
-		// wlroots buffer unlock/destruction must run on the Wayland thread.
-		server->callable_queue.enqueue([=]() {
-			delete buffer;
-		});
+		// The frame's deleter queues wlroots buffer destruction on Wayland.
+		delete static_cast<ExternalTextureRegistry::Frame*>(user_data);
 	};
 
 	return true;
