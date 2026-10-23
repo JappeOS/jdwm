@@ -14,8 +14,6 @@ extern "C" {
 #undef static
 }
 
-static constexpr uint64_t ZENITH_FENCE_READINESS_TIMEOUT_NS = 500'000'000ull;
-
 static inline uint64_t zenith_swap_chain_monotonic_now_ns() {
 	timespec now{};
 	clock_gettime(CLOCK_MONOTONIC, &now);
@@ -77,7 +75,7 @@ bool Slot<T>::is_ready_nonblocking() {
 	pfd.revents = 0;
 
 	int ret = poll(&pfd, 1, 0);
-	if (ret > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+	if (ret > 0 && (pfd.revents & POLLIN)) {
 		int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
 		ready_fence_set_ns.store(0, std::memory_order_release);
 		if (consumed != -1) {
@@ -85,27 +83,10 @@ bool Slot<T>::is_ready_nonblocking() {
 		}
 		return true;
 	}
-	if (ret < 0 && errno != EINTR) {
-		int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
-		ready_fence_set_ns.store(0, std::memory_order_release);
-		if (consumed != -1) {
-			close(consumed);
-		}
-		return true;
-	}
+	// An error or timeout is not GPU completion. Keep the fence pending and
+	// let the reader select another completed frame instead of sampling a
+	// buffer that the GPU may still be writing.
 
-	uint64_t set_ns = ready_fence_set_ns.load(std::memory_order_acquire);
-	if (set_ns != 0) {
-		uint64_t now_ns = zenith_swap_chain_monotonic_now_ns();
-		if (now_ns > set_ns && now_ns - set_ns > ZENITH_FENCE_READINESS_TIMEOUT_NS) {
-			int consumed = ready_fence_fd.exchange(-1, std::memory_order_acq_rel);
-			ready_fence_set_ns.store(0, std::memory_order_release);
-			if (consumed != -1) {
-				close(consumed);
-			}
-			return true;
-		}
-	}
 	return false;
 }
 
@@ -116,35 +97,37 @@ SwapChain<T>::SwapChain(std::vector<std::shared_ptr<T>> buffers) {
 	for (const auto& buffer : buffers) {
 		slots.emplace_back(std::make_shared<Slot<T>>(buffer));
 	}
-	latest_buffer = slots[slots.size() - 2];
 	write_buffer = slots[slots.size() - 1];
 }
 
 template<class T>
 std::shared_ptr<Slot<T>> SwapChain<T>::choose_write_buffer_locked() const {
-	if (write_buffer != nullptr &&
+	if (write_in_progress && write_buffer != nullptr &&
 	    write_buffer != latest_buffer &&
 	    !write_buffer->is_presented()) {
 		return write_buffer;
 	}
 
+	std::shared_ptr<Slot<T>> oldest;
 	for (const auto& candidate : slots) {
 		if (candidate == nullptr || candidate == latest_buffer) {
 			continue;
 		}
-		if (!candidate->is_presented()) {
-			return candidate;
+		if (!candidate->is_presented() &&
+		    (oldest == nullptr || candidate->frame_serial.load() < oldest->frame_serial.load())) {
+			oldest = candidate;
 		}
 	}
 	// Never overwrite a frame being read/submitted by an output. In
 	// particular, a slow output on another GPU may still own every slot.
-	return nullptr;
+	return oldest;
 }
 
 template<class T>
 T* SwapChain<T>::start_write() {
 	std::scoped_lock lock(mutex);
 	write_buffer = choose_write_buffer_locked();
+	write_in_progress = write_buffer != nullptr;
 	if (write_buffer == nullptr) {
 		return nullptr;
 	}
@@ -175,18 +158,34 @@ void SwapChain<T>::end_write(array_view<FlutterRect> damage, int ready_fence_fd)
 	const uint64_t serial = next_frame_serial.fetch_add(1, std::memory_order_relaxed);
 	write_buffer->frame_serial.store(serial, std::memory_order_release);
 	latest_buffer = write_buffer;
+	write_in_progress = false;
 }
 
 template<class T>
-std::shared_ptr<Slot<T>> SwapChain<T>::start_read_slot() {
+std::shared_ptr<Slot<T>> SwapChain<T>::start_read_slot(bool* latest_pending) {
 	std::scoped_lock lock(mutex);
+	if (latest_pending != nullptr) *latest_pending = false;
 	if (latest_buffer == nullptr) {
 		return nullptr;
+	}
+	auto slot = latest_buffer;
+	if (!latest_buffer->is_ready_nonblocking()) {
+		if (latest_pending != nullptr) *latest_pending = true;
+		// Don't chase an unfinished newest frame while completed frames are
+		// waiting in the queue. This is common when GPU work runs behind CPU
+		// submission. The current write target is not a completed candidate.
+		std::shared_ptr<Slot<T>> ready;
+		for (const auto& candidate : slots) {
+			if ((write_in_progress && candidate == write_buffer) ||
+			    candidate->frame_serial.load() == 0) continue;
+			if ((ready == nullptr || candidate->frame_serial.load() > ready->frame_serial.load()) &&
+			    candidate->is_ready_nonblocking()) ready = candidate;
+		}
+		if (ready != nullptr) slot = ready;
 	}
 	// Pin under the same mutex used by the writer's selection. Pinning only
 	// after output commit leaves a race where this slot can be overwritten
 	// while the output is checking its fence or submitting its buffer.
-	auto slot = latest_buffer;
 	slot->acquire_presentation();
 	return std::shared_ptr<Slot<T>>(slot.get(), [slot](Slot<T>*) {
 		slot->release_presentation();

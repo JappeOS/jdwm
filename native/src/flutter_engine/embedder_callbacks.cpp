@@ -113,7 +113,10 @@ GLuint attach_framebuffer() {
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 	if (flutter_frame_started_ns != 0) {
-		zenith::render::trace_frame_sample("flutter-render", "flutter",
+		// Skia invokes the FBO callback immediately after present to prepare
+		// the next target. This interval includes pacing/idle time, not just
+		// rendering; don't label it as raster CPU duration.
+		zenith::render::trace_frame_sample("flutter-frame-interval", "flutter",
 			zenith::render::frame_trace_now() - flutter_frame_started_ns);
 		flutter_frame_started_ns = 0;
 	}

@@ -40,6 +40,7 @@ struct SwapChain {
 	std::vector<std::shared_ptr<Slot<T>>> slots = {};
 	std::shared_ptr<Slot<T>> write_buffer = {};
 	std::shared_ptr<Slot<T>> latest_buffer = {};
+	bool write_in_progress = false;
 	std::atomic<uint64_t> next_frame_serial{1};
 
 	[[nodiscard]] T* start_write();
@@ -49,7 +50,7 @@ struct SwapChain {
 	void end_write(array_view<FlutterRect> damage, int ready_fence_fd = -1);
 
 	[[nodiscard]] T* start_read();
-	[[nodiscard]] std::shared_ptr<Slot<T>> start_read_slot();
+	[[nodiscard]] std::shared_ptr<Slot<T>> start_read_slot(bool* latest_pending = nullptr);
 
 	virtual ~SwapChain();
 

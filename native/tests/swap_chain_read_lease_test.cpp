@@ -27,7 +27,7 @@ int main() {
 		assert(*reading->buffer == 100);
 		assert(reading->frame_serial.load() == serial);
 	}
-	auto slot = chain.slots.back();
+	auto slot = chain.slots.front();
 	assert(slot.get() == reading.get());
 	auto another_output = reading;
 	reading.reset();

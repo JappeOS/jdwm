@@ -324,7 +324,9 @@ void output_frame(wl_listener* listener, void* data) {
 	ZenithOutput* vsync_output = server->output_manager->vsync_driver_output();
 	const bool is_vsync_driver = (output == vsync_output);
 
-	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_swap_chain->start_read_slot();
+	bool latest_pending = false;
+	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_swap_chain->start_read_slot(&latest_pending);
+	zenith::render::trace_frame_sample("latest-fence", output->wlr_output->name, 0, latest_pending);
 	if (source_slot == nullptr || source_slot->buffer == nullptr) {
 		// Bootstrap: if we have no composed frame yet, still service one vsync
 		// tick so Flutter can produce the first frame.
@@ -366,6 +368,7 @@ void output_frame(wl_listener* listener, void* data) {
 	const auto& frame_damage = source_slot->damage_regions;
 	const uint64_t source_frame_serial = source_slot->frame_serial.load(std::memory_order_acquire);
 	const bool has_new_source_frame = source_frame_serial != output->last_presented_source_serial;
+	zenith::render::trace_frame_sample("source-repeat", output->wlr_output->name, 0, !has_new_source_frame);
 
 	wlr_buffer* source_wlr_buffer = source_buffer->buffer;
 	struct wlr_box source_box_i = {};
@@ -393,7 +396,10 @@ void output_frame(wl_listener* listener, void* data) {
 	}
 
 	bool output_region_damaged = has_new_source_frame;
-	if (extend_mode && have_source_box && has_new_source_frame && !frame_damage.empty()) {
+	// If intermediate frames were skipped, their damage is not in this
+	// frame's damage list. Conservatively repaint the whole output.
+	const bool consecutive_frame = source_frame_serial == output->last_presented_source_serial + 1;
+	if (extend_mode && have_source_box && has_new_source_frame && consecutive_frame && !frame_damage.empty()) {
 		output_region_damaged = damage_intersects_output_source_box(frame_damage, source_box_i);
 	}
 
