@@ -10,6 +10,7 @@
 #include "output/rendering_policy.hpp"
 #include "output/presentation_timing.hpp"
 #include "output/frame_timing_trace.hpp"
+#include "output/frame_selection.hpp"
 #include "util/egl/gl_context_lock.hpp"
 #include <unistd.h>
 #include <atomic>
@@ -324,9 +325,9 @@ void output_frame(wl_listener* listener, void* data) {
 	ZenithOutput* vsync_output = server->output_manager->vsync_driver_output();
 	const bool is_vsync_driver = (output == vsync_output);
 
-	bool latest_pending = false;
-	std::shared_ptr<Slot<wlr_gles2_buffer>> source_slot = source_swap_chain->start_read_slot(&latest_pending);
-	zenith::render::trace_frame_sample("latest-fence", output->wlr_output->name, 0, latest_pending);
+	auto selection = zenith::render::select_output_frame(*source_swap_chain, output->schedule_frame_timer);
+	auto source_slot = std::move(selection.slot);
+	zenith::render::trace_frame_sample("latest-fence", output->wlr_output->name, 0, selection.latest_pending);
 	if (source_slot == nullptr || source_slot->buffer == nullptr) {
 		// Bootstrap: if we have no composed frame yet, still service one vsync
 		// tick so Flutter can produce the first frame.
