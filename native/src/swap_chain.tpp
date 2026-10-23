@@ -136,7 +136,9 @@ std::shared_ptr<Slot<T>> SwapChain<T>::choose_write_buffer_locked() const {
 			return candidate;
 		}
 	}
-	return write_buffer != nullptr ? write_buffer : latest_buffer;
+	// Never overwrite a frame being read/submitted by an output. In
+	// particular, a slow output on another GPU may still own every slot.
+	return nullptr;
 }
 
 template<class T>
@@ -178,7 +180,17 @@ void SwapChain<T>::end_write(array_view<FlutterRect> damage, int ready_fence_fd)
 template<class T>
 std::shared_ptr<Slot<T>> SwapChain<T>::start_read_slot() {
 	std::scoped_lock lock(mutex);
-	return latest_buffer;
+	if (latest_buffer == nullptr) {
+		return nullptr;
+	}
+	// Pin under the same mutex used by the writer's selection. Pinning only
+	// after output commit leaves a race where this slot can be overwritten
+	// while the output is checking its fence or submitting its buffer.
+	auto slot = latest_buffer;
+	slot->acquire_presentation();
+	return std::shared_ptr<Slot<T>>(slot.get(), [slot](Slot<T>*) {
+		slot->release_presentation();
+	});
 }
 
 template<class T>

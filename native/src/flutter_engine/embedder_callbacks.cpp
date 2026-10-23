@@ -3,6 +3,7 @@
 #include "server.hpp"
 #include "rect.hpp"
 #include "output/zenith_output_manager.hpp"
+#include "output/frame_timing_trace.hpp"
 #include "util/egl/egl_extensions.hpp"
 #include "util/egl/gl_context_lock.hpp"
 
@@ -85,7 +86,10 @@ bool flutter_clear_current(void* userdata) {
 	return success;
 }
 
+static thread_local uint64_t flutter_frame_started_ns = 0;
+
 uint32_t flutter_fbo_callback(void* userdata) {
+	flutter_frame_started_ns = zenith::render::frame_trace_now();
 	GLuint fbo = attach_framebuffer();
 	zenith::egl::set_flutter_frame_rendering_active(
 		zenith::egl::gl_context_serialization_enabled() && fbo != 0
@@ -100,6 +104,7 @@ GLuint attach_framebuffer() {
 		return 0;
 	}
 	wlr_gles2_buffer* gles2_buffer = swap_chain->start_write();
+	zenith::render::trace_frame_sample("write-slot", "flutter", 0, gles2_buffer == nullptr);
 	if (gles2_buffer == nullptr) {
 		return 0;
 	}
@@ -107,6 +112,12 @@ GLuint attach_framebuffer() {
 }
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
+	if (flutter_frame_started_ns != 0) {
+		zenith::render::trace_frame_sample("flutter-render", "flutter",
+			zenith::render::frame_trace_now() - flutter_frame_started_ns);
+		flutter_frame_started_ns = 0;
+	}
+	zenith::render::FrameTimingScope present_timer("flutter-present", "flutter");
 	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage, present_info->frame_damage.num_rects);
 	int ready_fence_fd = create_frame_ready_fence_fd();
 	if (ready_fence_fd == -1) {

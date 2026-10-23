@@ -9,6 +9,7 @@
 #include "output/zenith_output_manager.hpp"
 #include "output/rendering_policy.hpp"
 #include "output/presentation_timing.hpp"
+#include "output/frame_timing_trace.hpp"
 #include "util/egl/gl_context_lock.hpp"
 #include <unistd.h>
 #include <atomic>
@@ -112,16 +113,14 @@ static void log_cursor_mode_transition(ZenithOutput* output) {
 }
 
 static void set_scene_buffer_with_damage(
-	ZenithOutput* output, wlr_buffer* buffer, SwapChain<wlr_gles2_buffer>* damage_source) {
+	ZenithOutput* output, wlr_buffer* buffer, const std::vector<FlutterRect>& damage) {
 	if (output->scene_buffer == nullptr) {
 		return;
 	}
 	// wlroots 0.19 doesn't expose scene damage import for external buffers in
 	// this path, but we can still skip redundant rebinds when the producer
 	// reports no damage and the underlying buffer object is unchanged.
-	if (damage_source != nullptr &&
-	    output->last_scene_buffer == buffer &&
-	    damage_source->get_damage_regions().size() == 0) {
+	if (output->last_scene_buffer == buffer && damage.empty()) {
 		return;
 	}
 	wlr_scene_buffer_set_buffer(output->scene_buffer, buffer);
@@ -310,6 +309,7 @@ void output_create_handle(wl_listener* listener, void* data) {
 void output_frame(wl_listener* listener, void* data) {
 	(void)data;
 	ZenithOutput* output = wl_container_of(listener, output, frame_listener);
+	zenith::render::FrameTimingScope frame_timer("output-frame", output->wlr_output->name);
 	auto* server = ZenithServer::instance();
 
 	log_cursor_mode_transition(output);
@@ -336,7 +336,9 @@ void output_frame(wl_listener* listener, void* data) {
 	}
 	const bool cursor_repaint_requested =
 		output->cursor_frame_pending || software_cursor_active(output->wlr_output);
-	if (!source_slot->is_ready_nonblocking()) {
+	const bool source_ready = source_slot->is_ready_nonblocking();
+	zenith::render::trace_frame_sample("source-fence", output->wlr_output->name, 0, !source_ready);
+	if (!source_ready) {
 		// Cursor updates must not stall behind a not-yet-ready newest frame.
 		// Reuse the already-presented slot to clear old cursor pixels.
 		if (cursor_repaint_requested &&
@@ -431,7 +433,7 @@ void output_frame(wl_listener* listener, void* data) {
 			wlr_scene_buffer_set_buffer(output->scene_buffer, source_wlr_buffer);
 		}
 	} else {
-		set_scene_buffer_with_damage(output, source_wlr_buffer, source_swap_chain);
+		set_scene_buffer_with_damage(output, source_wlr_buffer, frame_damage);
 	}
 
 	if (extend_mode) {
@@ -458,6 +460,7 @@ void output_frame(wl_listener* listener, void* data) {
 			wl_event_source_timer_update(output->schedule_frame_timer, 16);
 			return;
 		}
+		zenith::render::FrameTimingScope commit_timer("scene-commit", output->wlr_output->name);
 		output_committed = wlr_scene_output_commit(output->scene_output, nullptr);
 	}
 	if (!output_committed) {
