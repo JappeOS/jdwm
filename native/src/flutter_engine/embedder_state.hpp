@@ -13,6 +13,7 @@
 #include "platform_channels/incoming_message_dispatcher.hpp"
 #include "platform_channels/method_channel.h"
 #include "task_runner.hpp"
+#include "vsync_scheduler.hpp"
 #include "basic_message_channel.h"
 #include "document.h"
 #include "surface_buffer_chain.hpp"
@@ -36,7 +37,7 @@ struct EmbedderState {
 
 	FlutterEngine get_engine() const;
 
-	std::optional<intptr_t> get_baton();
+	VsyncDispatch poll_vsync(uint64_t now_ns, uint64_t interval_ns);
 
 	void set_baton(intptr_t baton);
 
@@ -124,11 +125,9 @@ private:
 	// The thread on which the Flutter engine and its task runner is run.
 	std::thread embedder_thread;
 
-	// After every vblank, Flutter gives us an opaque handle, and we need to give it back at the
-	// next vblank.
-	intptr_t baton = 0;
-	bool new_baton = false;
-	std::mutex baton_mutex{};
+	// Keep Flutter's pending vsync request until the active output's next tick.
+	// Output retries and idle callbacks must not generate extra vsync replies.
+	VsyncScheduler vsync_scheduler;
 	// Flutter needs some tasks run on the main thread. This task runner is tied to the Wayland
 	// event loop and schedules tasks at the right time.
 	TaskRunner platform_task_runner{};

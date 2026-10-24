@@ -553,14 +553,22 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 		return 0;
 	}
 
-	/*
-	 * Notify the compositor to prepare a new frame for the next time.
-	 */
-	std::optional<intptr_t> baton = embedder_state->get_baton();
-	if (baton.has_value()) {
-		uint64_t now = FlutterEngineGetCurrentTime();
-		uint64_t next_frame = zenith::render::next_presentation_time_ns(now, timing_output);
-		embedder_state->on_vsync(*baton, now, next_frame);
+	auto* driver = server->output_manager->vsync_driver_output();
+	if (driver == nullptr || !driver->wlr_output->enabled) {
+		return 0;
+	}
+	uint64_t now = FlutterEngineGetCurrentTime();
+	auto dispatch = embedder_state->poll_vsync(now, zenith::render::output_frame_interval_ns(timing_output));
+	if (dispatch.delay_ns != 0) {
+		// A no-damage output callback can run immediately at event-loop idle.
+		// Keep the baton pending and wake again at the refresh deadline rather
+		// than feeding Flutter thousands of synthetic vsyncs per second.
+		int delay_ms = static_cast<int>((dispatch.delay_ns + 999'999) / 1'000'000);
+		wl_event_source_timer_update(driver->schedule_frame_timer, delay_ms);
+		zenith::render::trace_frame_sample("vsync-request", driver->wlr_output->name, 0, true);
+	} else if (dispatch.baton.has_value()) {
+		zenith::render::trace_frame_sample("vsync-request", driver->wlr_output->name, 0, false);
+		embedder_state->on_vsync(*dispatch.baton, now, dispatch.target_ns);
 	}
 	return 0;
 }

@@ -514,19 +514,12 @@ void EmbedderState::mark_external_texture_frame_available(int64_t id) {
 	});
 }
 
-std::optional<intptr_t> EmbedderState::get_baton() {
-	std::scoped_lock lock(baton_mutex);
-	if (new_baton) {
-		new_baton = false;
-		return baton;
-	}
-	return std::nullopt;
+VsyncDispatch EmbedderState::poll_vsync(uint64_t now_ns, uint64_t interval_ns) {
+	return vsync_scheduler.poll(now_ns, interval_ns);
 }
 
 void EmbedderState::set_baton(intptr_t p_baton) {
-	std::scoped_lock lock(baton_mutex);
-	baton = p_baton;
-	new_baton = true;
+	vsync_scheduler.request(p_baton);
 }
 
 FlutterEngine EmbedderState::get_engine() const {
