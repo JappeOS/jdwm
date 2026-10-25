@@ -10,6 +10,7 @@ struct VsyncDispatch {
 	std::optional<intptr_t> baton;
 	uint64_t delay_ns = 0;
 	uint64_t target_ns = 0;
+	bool gpu_blocked = false;
 };
 
 // Flutter requests on its thread; the Wayland thread polls on output events.
@@ -21,10 +22,14 @@ public:
 		pending_ = baton;
 	}
 
-	VsyncDispatch poll(uint64_t now_ns, uint64_t interval_ns) {
+	VsyncDispatch poll(uint64_t now_ns, uint64_t interval_ns, bool frame_ready = true) {
 		assert(interval_ns > 0);
 		std::scoped_lock lock(mutex_);
 		if (!pending_) return {};
+		// Refresh pacing alone does not bound queued GPU work. Retain the
+		// request until the previous submission completes; never wait on the
+		// Wayland thread or manufacture a vsync for an already consumed baton.
+		if (!frame_ready) return {std::nullopt, 1'000'000, 0, true};
 		if (interval_ns != interval_ns_) {
 			interval_ns_ = interval_ns;
 			next_tick_ns_ = 0;

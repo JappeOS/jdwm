@@ -564,11 +564,17 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 		return 0;
 	}
 	uint64_t now = FlutterEngineGetCurrentTime();
-	auto dispatch = embedder_state->poll_vsync(now, zenith::render::output_frame_interval_ns(timing_output));
+	auto* chain = server->output_manager->composition_source_swap_chain();
+	const bool frame_ready = chain != nullptr && chain->latest_frame_ready();
+	auto dispatch = embedder_state->poll_vsync(
+		now, zenith::render::output_frame_interval_ns(timing_output), frame_ready);
+	if (dispatch.delay_ns != 0 || dispatch.baton.has_value()) {
+		zenith::render::trace_frame_sample("vsync-backpressure", driver->wlr_output->name, 0, dispatch.gpu_blocked);
+	}
 	if (dispatch.delay_ns != 0) {
 		// A no-damage output callback can run immediately at event-loop idle.
-		// Keep the baton pending and wake again at the refresh deadline rather
-		// than feeding Flutter thousands of synthetic vsyncs per second.
+		// Keep the baton pending until both refresh pacing and GPU admission
+		// allow another frame. The dedicated timer also resumes without input.
 		int delay_ms = static_cast<int>((dispatch.delay_ns + 999'999) / 1'000'000);
 		wl_event_source_timer_update(driver->vsync_timer, delay_ms);
 		zenith::render::trace_frame_sample("vsync-request", driver->wlr_output->name, 0, true);

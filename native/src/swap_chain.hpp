@@ -29,6 +29,11 @@ struct Slot {
 	[[nodiscard]] bool is_presented() const;
 	void set_ready_fence_fd(int fd);
 	[[nodiscard]] bool is_ready_nonblocking();
+	// Caller owns the returned fd. -1 with errno == 0 means already ready.
+	[[nodiscard]] int duplicate_ready_fence();
+
+private:
+	std::mutex fence_mutex;
 };
 
 template<class T>
@@ -43,6 +48,8 @@ struct SwapChain {
 	bool write_in_progress = false;
 	std::atomic<uint64_t> next_frame_serial{1};
 
+	// Raster/producer thread only: may wait for GPU completion, without
+	// holding the chain mutex. Readers on the Wayland thread never wait.
 	[[nodiscard]] T* start_write();
 
 	[[nodiscard]] array_view<FlutterRect> get_damage_regions();
@@ -51,6 +58,8 @@ struct SwapChain {
 
 	[[nodiscard]] T* start_read();
 	[[nodiscard]] std::shared_ptr<Slot<T>> start_read_slot(bool* latest_pending = nullptr);
+	// Nonblocking GPU admission check for the Wayland-thread vsync scheduler.
+	[[nodiscard]] bool latest_frame_ready();
 
 	virtual ~SwapChain();
 

@@ -3,6 +3,7 @@
 #include <memory>
 #include <cassert>
 #include <cerrno>
+#include <fcntl.h>
 #include <poll.h>
 #include <time.h>
 #include <unistd.h>
@@ -55,6 +56,7 @@ bool Slot<T>::is_presented() const {
 
 template<class T>
 void Slot<T>::set_ready_fence_fd(int fd) {
+	std::scoped_lock lock(fence_mutex);
 	ready_fence_set_ns.store(fd != -1 ? zenith_swap_chain_monotonic_now_ns() : 0, std::memory_order_release);
 	int previous = ready_fence_fd.exchange(fd, std::memory_order_acq_rel);
 	if (previous != -1 && previous != fd) {
@@ -64,6 +66,10 @@ void Slot<T>::set_ready_fence_fd(int fd) {
 
 template<class T>
 bool Slot<T>::is_ready_nonblocking() {
+	// Output selection and raster admission can check the same completed
+	// slot concurrently. Serialize poll/close with duplication and replacement
+	// so descriptor reuse cannot turn an unrelated fd into a completion signal.
+	std::scoped_lock lock(fence_mutex);
 	int fence_fd = ready_fence_fd.load(std::memory_order_acquire);
 	if (fence_fd == -1) {
 		return true;
@@ -91,6 +97,17 @@ bool Slot<T>::is_ready_nonblocking() {
 }
 
 template<class T>
+int Slot<T>::duplicate_ready_fence() {
+	std::scoped_lock lock(fence_mutex);
+	const int fd = ready_fence_fd.load(std::memory_order_acquire);
+	if (fd == -1) {
+		errno = 0;
+		return -1;
+	}
+	return fcntl(fd, F_DUPFD_CLOEXEC, 0);
+}
+
+template<class T>
 SwapChain<T>::SwapChain(std::vector<std::shared_ptr<T>> buffers) {
 	assert(buffers.size() >= 4);
 	slots.reserve(buffers.size());
@@ -109,11 +126,21 @@ std::shared_ptr<Slot<T>> SwapChain<T>::choose_write_buffer_locked() const {
 	}
 
 	std::shared_ptr<Slot<T>> oldest;
+	std::shared_ptr<Slot<T>> newest_ready;
 	for (const auto& candidate : slots) {
-		if (candidate == nullptr || candidate == latest_buffer) {
+		if (candidate->frame_serial.load() != 0 && candidate->is_ready_nonblocking() &&
+		    (newest_ready == nullptr || candidate->frame_serial.load() > newest_ready->frame_serial.load())) {
+			newest_ready = candidate;
+		}
+	}
+	for (const auto& candidate : slots) {
+		// Preserve a completed frame for the reader even if all newer frames
+		// are GPU-pending. Otherwise the writer can continually steal the only
+		// frame the output could advance to, starving presentation under load.
+		if (candidate == nullptr || candidate == latest_buffer || candidate == newest_ready) {
 			continue;
 		}
-		if (!candidate->is_presented() &&
+		if (!candidate->is_presented() && candidate->is_ready_nonblocking() &&
 		    (oldest == nullptr || candidate->frame_serial.load() < oldest->frame_serial.load())) {
 			oldest = candidate;
 		}
@@ -125,13 +152,45 @@ std::shared_ptr<Slot<T>> SwapChain<T>::choose_write_buffer_locked() const {
 
 template<class T>
 T* SwapChain<T>::start_write() {
-	std::scoped_lock lock(mutex);
-	write_buffer = choose_write_buffer_locked();
-	write_in_progress = write_buffer != nullptr;
-	if (write_buffer == nullptr) {
-		return nullptr;
+	std::unique_lock lock(mutex);
+	for (;;) {
+		write_buffer = choose_write_buffer_locked();
+		write_in_progress = write_buffer != nullptr;
+		if (write_buffer != nullptr) return write_buffer->buffer.get();
+
+		// Flutter may already have pipelined work when vsync admission stops.
+		// Bound that work here too: never replace an unfinished slot's fence.
+		std::shared_ptr<Slot<T>> pending;
+		for (const auto& candidate : slots) {
+			if (candidate->is_presented() ||
+			    candidate->ready_fence_fd.load() == -1) continue;
+			if (pending == nullptr || candidate->frame_serial.load() < pending->frame_serial.load()) {
+				pending = candidate;
+			}
+		}
+		if (pending == nullptr) return nullptr; // All remaining buffers are leased.
+		// A reader can consume/close the slot's fence while we wait. Own a
+		// duplicate, and release the mutex so output selection never waits on us.
+		int fd = pending->duplicate_ready_fence();
+		if (fd == -1) {
+			if (errno == 0) continue; // A reader already consumed this fence.
+			return nullptr;
+		}
+		lock.unlock();
+		pollfd pfd{fd, POLLIN, 0};
+		int result;
+		do { result = poll(&pfd, 1, -1); } while (result < 0 && errno == EINTR);
+		close(fd);
+		if (result < 0 || !(pfd.revents & POLLIN)) return nullptr;
+		lock.lock();
+		// Re-evaluate both leases and the newest completed frame after waking.
 	}
-	return write_buffer->buffer.get();
+}
+
+template<class T>
+bool SwapChain<T>::latest_frame_ready() {
+	std::scoped_lock lock(mutex);
+	return latest_buffer == nullptr || latest_buffer->is_ready_nonblocking();
 }
 
 template<class T>

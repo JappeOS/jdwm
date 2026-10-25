@@ -104,7 +104,12 @@ GLuint attach_framebuffer() {
 	if (swap_chain == nullptr) {
 		return 0;
 	}
+	// Only the raster thread may wait for a free, GPU-completed target. The
+	// Wayland thread remains available for input, frame selection and flips.
+	const uint64_t acquire_started = zenith::render::frame_trace_now();
 	wlr_gles2_buffer* gles2_buffer = swap_chain->start_write();
+	zenith::render::trace_frame_sample("write-acquire", "flutter",
+		zenith::render::frame_trace_now() - acquire_started);
 	zenith::render::trace_frame_sample("write-slot", "flutter", 0, gles2_buffer == nullptr);
 	if (gles2_buffer == nullptr) {
 		return 0;

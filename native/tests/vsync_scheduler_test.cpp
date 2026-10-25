@@ -61,4 +61,22 @@ int main() {
 		}
 	}
 	assert(delivered >= 144 && delivered <= 145);
+
+	// A timer can reach many refresh deadlines while the GPU is behind.
+	// Keep the same request pending and resume once, without catch-up ticks.
+	VsyncScheduler overloaded;
+	assert(overloaded.poll(start, interval, false).delay_ns == 0);
+	overloaded.request(42);
+	for (uint64_t i = 0; i < 1000; ++i) {
+		auto stalled = overloaded.poll(start + i * interval, interval, false);
+		assert(!stalled.baton && stalled.gpu_blocked && stalled.delay_ns > 0);
+	}
+	const auto recovered_at = start + 1000 * interval;
+	auto recovered = overloaded.poll(recovered_at, interval, true);
+	assert(recovered.baton == 42 && !recovered.gpu_blocked);
+	assert(recovered.target_ns == recovered_at + interval);
+	assert(!overloaded.poll(recovered_at, interval, true).baton);
+	overloaded.request(43);
+	assert(!overloaded.poll(recovered_at, interval, true).baton);
+	assert(overloaded.poll(recovered_at + interval, interval, true).baton == 43);
 }

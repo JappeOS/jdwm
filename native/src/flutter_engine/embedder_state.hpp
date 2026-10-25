@@ -37,7 +37,7 @@ struct EmbedderState {
 
 	FlutterEngine get_engine() const;
 
-	VsyncDispatch poll_vsync(uint64_t now_ns, uint64_t interval_ns);
+	VsyncDispatch poll_vsync(uint64_t now_ns, uint64_t interval_ns, bool frame_ready);
 
 	void set_baton(intptr_t baton);
 

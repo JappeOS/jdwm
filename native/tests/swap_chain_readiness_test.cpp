@@ -63,8 +63,7 @@ int main() {
 	assert(startup.start_read_slot()->is_ready_nonblocking());
 	close(startup_fence);
 
-	// A recycled write target still has its old completed serial/fence until
-	// end_write. It must not be mistaken for a usable completed frame.
+	// Preserve a completed frame when every newer submission is pending.
 	SwapChain<int> recycling(buffers);
 	int delayed = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 	assert(delayed >= 0);
@@ -72,10 +71,9 @@ int main() {
 		assert(recycling.start_write());
 		recycling.end_write(damage, value == 1 ? -1 : dup(delayed));
 	}
-	assert(recycling.start_write()); // Recycles serial 1, the only completed slot.
-	auto still_pending = recycling.start_read_slot(&latest_pending);
+	auto completed = recycling.start_read_slot(&latest_pending);
 	assert(latest_pending);
-	assert(still_pending->frame_serial.load() == 4);
-	assert(!still_pending->is_ready_nonblocking());
+	assert(completed->frame_serial.load() == 1);
+	assert(completed->is_ready_nonblocking());
 	close(delayed);
 }
