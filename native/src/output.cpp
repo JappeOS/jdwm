@@ -54,6 +54,12 @@ ZenithOutput::ZenithOutput(struct wlr_output* wlr_output)
 		wlr_output_schedule_frame(output);
 		return 0;
 	}, wlr_output);
+	// Flutter's clock must keep running while a page flip or a GPU fence is
+	// pending. Repaint scheduling can defer to that flip and has separate
+	// retry deadlines, so it cannot also serve as the animation clock.
+	vsync_timer = wl_event_loop_add_timer(event_loop, [](void* data) {
+		return vsync_callback(data);
+	}, server);
 
 	scene_output = wlr_scene_output_create(server->scene, wlr_output);
 	scene_buffer = wlr_scene_buffer_create(&server->scene->tree, nullptr);
@@ -564,9 +570,10 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 		// Keep the baton pending and wake again at the refresh deadline rather
 		// than feeding Flutter thousands of synthetic vsyncs per second.
 		int delay_ms = static_cast<int>((dispatch.delay_ns + 999'999) / 1'000'000);
-		wl_event_source_timer_update(driver->schedule_frame_timer, delay_ms);
+		wl_event_source_timer_update(driver->vsync_timer, delay_ms);
 		zenith::render::trace_frame_sample("vsync-request", driver->wlr_output->name, 0, true);
 	} else if (dispatch.baton.has_value()) {
+		wl_event_source_timer_update(driver->vsync_timer, 0);
 		zenith::render::trace_frame_sample("vsync-request", driver->wlr_output->name, 0, false);
 		embedder_state->on_vsync(*dispatch.baton, now, dispatch.target_ns);
 	}
@@ -634,6 +641,10 @@ void output_destroy(wl_listener* listener, void* data) {
 	if (output->schedule_frame_timer != nullptr) {
 		wl_event_source_remove(output->schedule_frame_timer);
 		output->schedule_frame_timer = nullptr;
+	}
+	if (output->vsync_timer != nullptr) {
+		wl_event_source_remove(output->vsync_timer);
+		output->vsync_timer = nullptr;
 	}
 
 	if (output->software_cursor_locked) {

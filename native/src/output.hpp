@@ -27,7 +27,8 @@ struct ZenithOutput {
 	wl_listener frame_listener{};
 	wl_listener request_state_listener{};
 	wl_listener destroy{};
-	wl_event_source* schedule_frame_timer;
+	wl_event_source* schedule_frame_timer = nullptr;
+	wl_event_source* vsync_timer = nullptr;
 	bool software_cursor_locked = false;
 	bool attach_render_locked = false;
 	bool cursor_mode_logged = false;

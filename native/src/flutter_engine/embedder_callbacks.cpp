@@ -1,6 +1,7 @@
 #include "embedder_callbacks.hpp"
 #include "embedder_state.hpp"
 #include "server.hpp"
+#include "output.hpp"
 #include "rect.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "output/frame_timing_trace.hpp"
@@ -163,7 +164,9 @@ void flutter_vsync_callback(void* userdata, intptr_t baton) {
 	if (server != nullptr && server->output_manager != nullptr) {
 		server->callable_queue.enqueue([server] {
 			if (server->output_manager != nullptr) {
-				server->output_manager->schedule_compositor_frame();
+				// Service the paced request even while the output is waiting
+				// for a page flip. Frame publication schedules the repaint.
+				vsync_callback(server);
 			}
 		});
 	}
