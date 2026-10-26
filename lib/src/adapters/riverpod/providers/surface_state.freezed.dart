@@ -27,6 +27,7 @@ mixin _$SurfaceState {
   List<int> get subsurfacesBelow;
   List<int> get subsurfacesAbove;
   Rect get inputRegion;
+  Rect get opaqueRect;
 
   /// Create a copy of SurfaceState
   /// with the given fields replaced by the non-null parameter values.
@@ -63,7 +64,9 @@ mixin _$SurfaceState {
             const DeepCollectionEquality()
                 .equals(other.subsurfacesAbove, subsurfacesAbove) &&
             (identical(other.inputRegion, inputRegion) ||
-                other.inputRegion == inputRegion));
+                other.inputRegion == inputRegion) &&
+            (identical(other.opaqueRect, opaqueRect) ||
+                other.opaqueRect == opaqueRect));
   }
 
   @override
@@ -81,11 +84,12 @@ mixin _$SurfaceState {
       textureKey,
       const DeepCollectionEquality().hash(subsurfacesBelow),
       const DeepCollectionEquality().hash(subsurfacesAbove),
-      inputRegion);
+      inputRegion,
+      opaqueRect);
 
   @override
   String toString() {
-    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion)';
+    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion, opaqueRect: $opaqueRect)';
   }
 }
 
@@ -108,7 +112,8 @@ abstract mixin class $SurfaceStateCopyWith<$Res> {
       GlobalKey textureKey,
       List<int> subsurfacesBelow,
       List<int> subsurfacesAbove,
-      Rect inputRegion});
+      Rect inputRegion,
+      Rect opaqueRect});
 }
 
 /// @nodoc
@@ -136,6 +141,7 @@ class _$SurfaceStateCopyWithImpl<$Res> implements $SurfaceStateCopyWith<$Res> {
     Object? subsurfacesBelow = null,
     Object? subsurfacesAbove = null,
     Object? inputRegion = null,
+    Object? opaqueRect = null,
   }) {
     return _then(_self.copyWith(
       role: null == role
@@ -189,6 +195,10 @@ class _$SurfaceStateCopyWithImpl<$Res> implements $SurfaceStateCopyWith<$Res> {
       inputRegion: null == inputRegion
           ? _self.inputRegion
           : inputRegion // ignore: cast_nullable_to_non_nullable
+              as Rect,
+      opaqueRect: null == opaqueRect
+          ? _self.opaqueRect
+          : opaqueRect // ignore: cast_nullable_to_non_nullable
               as Rect,
     ));
   }
@@ -300,7 +310,8 @@ extension SurfaceStatePatterns on SurfaceState {
             GlobalKey textureKey,
             List<int> subsurfacesBelow,
             List<int> subsurfacesAbove,
-            Rect inputRegion)?
+            Rect inputRegion,
+            Rect opaqueRect)?
         $default, {
     required TResult orElse(),
   }) {
@@ -320,7 +331,8 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.textureKey,
             _that.subsurfacesBelow,
             _that.subsurfacesAbove,
-            _that.inputRegion);
+            _that.inputRegion,
+            _that.opaqueRect);
       case _:
         return orElse();
     }
@@ -354,7 +366,8 @@ extension SurfaceStatePatterns on SurfaceState {
             GlobalKey textureKey,
             List<int> subsurfacesBelow,
             List<int> subsurfacesAbove,
-            Rect inputRegion)
+            Rect inputRegion,
+            Rect opaqueRect)
         $default,
   ) {
     final _that = this;
@@ -373,7 +386,8 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.textureKey,
             _that.subsurfacesBelow,
             _that.subsurfacesAbove,
-            _that.inputRegion);
+            _that.inputRegion,
+            _that.opaqueRect);
       case _:
         throw StateError('Unexpected subclass');
     }
@@ -406,7 +420,8 @@ extension SurfaceStatePatterns on SurfaceState {
             GlobalKey textureKey,
             List<int> subsurfacesBelow,
             List<int> subsurfacesAbove,
-            Rect inputRegion)?
+            Rect inputRegion,
+            Rect opaqueRect)?
         $default,
   ) {
     final _that = this;
@@ -425,7 +440,8 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.textureKey,
             _that.subsurfacesBelow,
             _that.subsurfacesAbove,
-            _that.inputRegion);
+            _that.inputRegion,
+            _that.opaqueRect);
       case _:
         return null;
     }
@@ -448,7 +464,8 @@ class _SurfaceState implements SurfaceState {
       required this.textureKey,
       required final List<int> subsurfacesBelow,
       required final List<int> subsurfacesAbove,
-      required this.inputRegion})
+      required this.inputRegion,
+      this.opaqueRect = Rect.zero})
       : _subsurfacesBelow = subsurfacesBelow,
         _subsurfacesAbove = subsurfacesAbove;
 
@@ -492,6 +509,9 @@ class _SurfaceState implements SurfaceState {
 
   @override
   final Rect inputRegion;
+  @override
+  @JsonKey()
+  final Rect opaqueRect;
 
   /// Create a copy of SurfaceState
   /// with the given fields replaced by the non-null parameter values.
@@ -528,7 +548,9 @@ class _SurfaceState implements SurfaceState {
             const DeepCollectionEquality()
                 .equals(other._subsurfacesAbove, _subsurfacesAbove) &&
             (identical(other.inputRegion, inputRegion) ||
-                other.inputRegion == inputRegion));
+                other.inputRegion == inputRegion) &&
+            (identical(other.opaqueRect, opaqueRect) ||
+                other.opaqueRect == opaqueRect));
   }
 
   @override
@@ -546,11 +568,12 @@ class _SurfaceState implements SurfaceState {
       textureKey,
       const DeepCollectionEquality().hash(_subsurfacesBelow),
       const DeepCollectionEquality().hash(_subsurfacesAbove),
-      inputRegion);
+      inputRegion,
+      opaqueRect);
 
   @override
   String toString() {
-    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion)';
+    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion, opaqueRect: $opaqueRect)';
   }
 }
 
@@ -575,7 +598,8 @@ abstract mixin class _$SurfaceStateCopyWith<$Res>
       GlobalKey textureKey,
       List<int> subsurfacesBelow,
       List<int> subsurfacesAbove,
-      Rect inputRegion});
+      Rect inputRegion,
+      Rect opaqueRect});
 }
 
 /// @nodoc
@@ -604,6 +628,7 @@ class __$SurfaceStateCopyWithImpl<$Res>
     Object? subsurfacesBelow = null,
     Object? subsurfacesAbove = null,
     Object? inputRegion = null,
+    Object? opaqueRect = null,
   }) {
     return _then(_SurfaceState(
       role: null == role
@@ -657,6 +682,10 @@ class __$SurfaceStateCopyWithImpl<$Res>
       inputRegion: null == inputRegion
           ? _self.inputRegion
           : inputRegion // ignore: cast_nullable_to_non_nullable
+              as Rect,
+      opaqueRect: null == opaqueRect
+          ? _self.opaqueRect
+          : opaqueRect // ignore: cast_nullable_to_non_nullable
               as Rect,
     ));
   }

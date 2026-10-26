@@ -39,6 +39,7 @@ abstract class SurfaceState with _$SurfaceState {
     required List<int> subsurfacesBelow,
     required List<int> subsurfacesAbove,
     required Rect inputRegion,
+    @Default(Rect.zero) Rect opaqueRect,
   }) = _SurfaceState;
 }
 
@@ -67,6 +68,7 @@ class SurfaceStates extends _$SurfaceStates {
     required List<int> subsurfacesBelow,
     required List<int> subsurfacesAbove,
     required Rect inputRegion,
+    Rect opaqueRect = Rect.zero,
   }) {
     state = _fromSnapshot(
       ref.read(surfaceControllerProvider).commit(
@@ -82,6 +84,7 @@ class SurfaceStates extends _$SurfaceStates {
               subsurfacesBelow: subsurfacesBelow,
               subsurfacesAbove: subsurfacesAbove,
               inputRegion: inputRegion,
+              opaqueRect: opaqueRect,
             ),
           ),
     );
@@ -102,6 +105,7 @@ class SurfaceStates extends _$SurfaceStates {
       subsurfacesBelow: s.subsurfacesBelow,
       subsurfacesAbove: s.subsurfacesAbove,
       inputRegion: s.inputRegion,
+      opaqueRect: s.opaqueRect,
     );
   }
 
@@ -120,6 +124,7 @@ class SurfaceStates extends _$SurfaceStates {
       subsurfacesBelow: s.subsurfacesBelow,
       subsurfacesAbove: s.subsurfacesAbove,
       inputRegion: s.inputRegion,
+      opaqueRect: s.opaqueRect,
     );
   }
 }

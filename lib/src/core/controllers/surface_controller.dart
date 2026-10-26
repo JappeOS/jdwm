@@ -15,6 +15,7 @@ class SurfaceSnapshot {
   final List<int> subsurfacesBelow;
   final List<int> subsurfacesAbove;
   final Rect inputRegion;
+  final Rect opaqueRect;
 
   const SurfaceSnapshot({
     required this.role,
@@ -30,6 +31,7 @@ class SurfaceSnapshot {
     required this.subsurfacesBelow,
     required this.subsurfacesAbove,
     required this.inputRegion,
+    this.opaqueRect = Rect.zero,
   });
 }
 
@@ -44,6 +46,7 @@ class SurfaceCommitData {
   final List<int> subsurfacesBelow;
   final List<int> subsurfacesAbove;
   final Rect inputRegion;
+  final Rect opaqueRect;
 
   const SurfaceCommitData({
     required this.role,
@@ -56,6 +59,7 @@ class SurfaceCommitData {
     required this.subsurfacesBelow,
     required this.subsurfacesAbove,
     required this.inputRegion,
+    this.opaqueRect = Rect.zero,
   });
 }
 
@@ -100,6 +104,7 @@ class SurfaceController {
       subsurfacesBelow: data.subsurfacesBelow,
       subsurfacesAbove: data.subsurfacesAbove,
       inputRegion: data.inputRegion,
+      opaqueRect: data.opaqueRect,
     );
   }
 }

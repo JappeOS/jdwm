@@ -59,6 +59,7 @@ struct SurfaceCommitMessage {
 		int32_t scale;
 		SurfaceBufferSourceBox source_box;
 		pixman_box32_t input_region;
+		pixman_box32_t opaque_rect;
 	} surface;
 	std::vector<SubsurfaceParentState> subsurfaces_below;
 	std::vector<SubsurfaceParentState> subsurfaces_above;

@@ -13,6 +13,7 @@ import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/util/backend_surface_geometry.dart';
 import 'package:jdwm/src/util/rect_overflow_box.dart';
+import 'package:jdwm/src/ui/common/window_backdrop.dart';
 
 import 'window_manager.dart';
 import 'window_entry.dart';
@@ -695,11 +696,11 @@ class _WindowState extends State<Window> {
     // SSD windows always use the same container type, avoiding gesture breaks
     // when toggling docked/maximized states.
     final theme = Theme.of(context);
-    return DualBorderOutlinedContainer(
+    final container = DualBorderOutlinedContainer(
       key: _mainContainerKey,
       hasBorder: hasBorder,
       borderRadius: hasBorder ? theme.borderRadiusLg : BorderRadius.zero,
-      surfaceBlur: theme.surfaceBlur,
+      surfaceBlur: 0,
       surfaceOpacity: theme.surfaceOpacity,
       boxShadow: hasBorder && isFocused
           ? [
@@ -713,6 +714,32 @@ class _WindowState extends State<Window> {
           : null,
       clipBehavior: Clip.antiAlias,
       child: child,
+    );
+    final radius = subtractByBorder(
+      hasBorder ? theme.borderRadiusLg : BorderRadius.zero,
+      theme.scaling,
+    );
+    // Keep this wrapper stable across decoration, focus and opacity changes.
+    Widget backdrop(Widget child, Rect opaque) => WindowBackdrop(
+          sigma: theme.surfaceBlur ?? 0,
+          radius: radius,
+          contentKey: widget.entry.repaintBoundaryKey,
+          opaqueRect: opaque,
+          child: child,
+        );
+    final viewId = _backendViewId;
+    if (viewId == null) return backdrop(container, Rect.zero);
+    return Consumer(
+      child: container,
+      builder: (context, ref, child) {
+        final viewport = _backendViewportRectFromRef(ref, widget.entry, viewId);
+        final surfaceOpaque = ref.watch(
+          surfaceStatesProvider(viewId).select((state) => state.opaqueRect),
+        );
+        final opaque =
+            surfaceOpaque.intersect(viewport).shift(-viewport.topLeft);
+        return backdrop(child!, opaque);
+      },
     );
   }
 

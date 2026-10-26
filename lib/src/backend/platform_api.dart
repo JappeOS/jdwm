@@ -427,6 +427,14 @@ class PlatformApi extends _$PlatformApi {
           subsurfacesBelow: subsurfaceIdsBelow,
           subsurfacesAbove: subsurfaceIdsAbove,
           inputRegion: inputRegionRect,
+          opaqueRect: surface["opaque_rect"] is List
+              ? Rect.fromLTRB(
+                  (surface["opaque_rect"][0] as num).toDouble(),
+                  (surface["opaque_rect"][1] as num).toDouble(),
+                  (surface["opaque_rect"][2] as num).toDouble(),
+                  (surface["opaque_rect"][3] as num).toDouble(),
+                )
+              : Rect.zero,
         );
 
     bool hasXdgSurface = event["has_xdg_surface"];

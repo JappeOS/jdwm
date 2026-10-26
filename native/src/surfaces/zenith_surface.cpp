@@ -1,3 +1,4 @@
+#include "opaque_region.hpp"
 #include <sys/ioctl.h>
 #include <xf86drm.h>
 #include <unistd.h>
@@ -104,6 +105,7 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 				.buffer_height = surface->current.buffer_height,
 		  },
 		  .input_region = surface->input_region.extents,
+		  .opaque_rect = surface_opaque_rect(&surface->opaque_region),
 	};
 
 	// Xwayland may expose transformed/non-local input regions for some X11 apps.
