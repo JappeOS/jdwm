@@ -14,6 +14,7 @@ import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/util/backend_surface_geometry.dart';
 import 'package:jdwm/src/util/rect_overflow_box.dart';
 import 'package:jdwm/src/ui/common/window_backdrop.dart';
+import 'package:jdwm/src/ui/common/window_occlusion_stack.dart';
 
 import 'window_manager.dart';
 import 'window_entry.dart';
@@ -660,7 +661,8 @@ class _WindowState extends State<Window> {
         final handleRect = handleBaseRect.inflate(_resizingSpacing);
 
         return Positioned.fill(
-          child: Stack(
+          child: WindowPaintBoundary(
+              child: Stack(
             clipBehavior: Clip.none,
             children: [
               contentPositioned,
@@ -669,7 +671,7 @@ class _WindowState extends State<Window> {
                 child: resizeHandles,
               ),
             ],
-          ),
+          )),
         );
       },
     );

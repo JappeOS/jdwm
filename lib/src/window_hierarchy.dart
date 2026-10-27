@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'window.dart';
 import 'window_entry.dart';
+import 'ui/common/window_occlusion_stack.dart';
 
 /// The single window stack. There is exactly one [WindowHierarchy] in the
 /// widget tree (owned by [WindowManager]). It maintains the
@@ -22,7 +23,6 @@ class WindowHierarchy extends StatefulWidget {
 
   @override
   WindowHierarchyState createState() => WindowHierarchyState();
-
 }
 
 class WindowHierarchyState extends State<WindowHierarchy> {
@@ -76,11 +76,15 @@ class WindowHierarchyState extends State<WindowHierarchy> {
           !listEquals(previous._entries, current._entries) ||
           !listEquals(previous._focusTree, current._focusTree),
       builder: (context, _) {
-        return Stack(
-          clipBehavior: Clip.none,
+        final ordered = entriesByFocus;
+        return WindowOcclusionStack(
+          contentKeys: [
+            for (final entry in ordered) entry.repaintBoundaryKey,
+            if (widget.alwaysOnTopWindow != null) null,
+          ],
           children: [
             // Windows, back-to-front by focus
-            ...entriesByFocus.map(
+            ...ordered.map(
               (e) => Window(
                 entry: e,
                 key: _windowKeys[e.id]!,

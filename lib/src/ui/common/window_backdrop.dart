@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:jdwm/src/util/flutter_frame_trace.dart';
+import 'package:jdwm/src/util/window_occlusion.dart';
 
 /// Disjoint backdrop areas outside a proven opaque rectangle.
 List<Rect> exposedBackdropRects(Rect bounds, Rect opaque) {
@@ -60,6 +61,7 @@ class RenderWindowBackdrop extends RenderProxyBox {
 
   void configure(
       double sigma, BorderRadius radius, GlobalKey key, Rect opaque) {
+    _invalidateOcclusion(); // Ancestor positioning can change with the same size.
     if (sigma == _sigma &&
         radius == _radius &&
         key == _contentKey &&
@@ -77,7 +79,30 @@ class RenderWindowBackdrop extends RenderProxyBox {
   @override
   bool get alwaysNeedsCompositing => _sigma > 0;
 
-  Rect _coveredRect(RRect clip) {
+  void _invalidateOcclusion() {
+    RenderObject? ancestor = parent;
+    while (ancestor != null) {
+      if (ancestor is WindowOcclusionOwner) {
+        (ancestor as WindowOcclusionOwner).invalidateOcclusion();
+        return;
+      }
+      ancestor = ancestor.parent;
+    }
+  }
+
+  @override
+  void markNeedsPaint() {
+    super.markNeedsPaint();
+    _invalidateOcclusion();
+  }
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    _invalidateOcclusion();
+  }
+
+  Rect _contentOpaqueRect() {
     final content = _contentKey.currentContext?.findRenderObject();
     if (_opaqueRect.isEmpty || content is! RenderBox || !content.hasSize) {
       return Rect.zero;
@@ -92,8 +117,28 @@ class RenderWindowBackdrop extends RenderProxyBox {
     final translation =
         MatrixUtils.getAsTranslation(content.getTransformTo(this));
     if (translation == null) return Rect.zero; // Unknown transforms: keep blur.
-    final covered =
-        _opaqueRect.intersect(Offset.zero & content.size).shift(translation);
+    return _opaqueRect.intersect(Offset.zero & content.size).shift(translation);
+  }
+
+  Rect get opaquePaintRect {
+    final covered = _contentOpaqueRect()
+        .intersect(
+            _radius.toRRect(Offset.zero & size).scaleRadii().safeInnerRect)
+        .deflate(1);
+    return covered.isEmpty || !covered.isFinite ? Rect.zero : covered;
+  }
+
+  List<Rect> get backdropPaintRects {
+    if (_sigma <= 0) return const [];
+    final bounds = Offset.zero & size;
+    return exposedBackdropRects(
+        bounds, _coveredRect(_radius.toRRect(bounds).scaleRadii()));
+  }
+
+  double get backdropOutset => 3 * _sigma + 4;
+
+  Rect _coveredRect(RRect clip) {
+    final covered = _contentOpaqueRect();
     // Skia does not implement shared backdrop IDs. Adjacent strips would
     // sample each other's blur. Only split across a full-width/full-height
     // opaque band wider than both filters' sampling support (3 sigma each).
