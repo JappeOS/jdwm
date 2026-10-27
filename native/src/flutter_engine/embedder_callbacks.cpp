@@ -179,6 +179,7 @@ void flutter_vsync_callback(void* userdata, intptr_t baton) {
 
 bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_id, size_t width, size_t height,
                                                 FlutterOpenGLTexture* texture_out) {
+	zenith::render::trace_frame_sample("texture-resolve", "flutter", 0);
 	auto* state = static_cast<EmbedderState*>(userdata);
 	// Snapshot acquisition does not wait for the Wayland event loop. Each
 	// frame owns its buffer until Flutter releases this particular image.

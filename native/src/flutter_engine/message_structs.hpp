@@ -50,6 +50,8 @@ enum class ToplevelDecoration {
 
 struct SurfaceCommitMessage {
 	size_t view_id;
+	bool texture_changed = true;
+	bool frame_callback_pending = false;
 	std::shared_ptr<wlr_buffer> buffer;
 	struct {
 		SurfaceRole role;

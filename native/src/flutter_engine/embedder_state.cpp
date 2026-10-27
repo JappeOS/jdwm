@@ -514,6 +514,15 @@ void EmbedderState::mark_external_texture_frame_available(int64_t id) {
 	});
 }
 
+void EmbedderState::schedule_frame() {
+	callable_queue.enqueue([this] {
+		auto result = FlutterEngineScheduleFrame(engine);
+		if (result != kSuccess) {
+			wlr_log(WLR_ERROR, "zenith: scheduling cached frame failed (%d)", result);
+		}
+	});
+}
+
 VsyncDispatch EmbedderState::poll_vsync(uint64_t now_ns, uint64_t interval_ns, bool frame_ready) {
 	return vsync_scheduler.poll(now_ns, interval_ns, frame_ready);
 }

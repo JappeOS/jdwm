@@ -12,6 +12,7 @@ import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/core/models/toplevel_decoration.dart';
 import 'package:jdwm/src/util/backend_surface_geometry.dart';
+import 'package:jdwm/src/util/flutter_frame_trace.dart';
 
 import '../zenith_backend.dart';
 import 'client_cursor.dart';
@@ -130,6 +131,7 @@ class WindowManagerState extends State<WindowManager> {
   @override
   void initState() {
     super.initState();
+    FlutterFrameTrace.attach();
     _syncRegionKeys(widget.monitors);
     if (widget.enableZenithBackend) {
       _initZenithBackend();
@@ -146,6 +148,7 @@ class WindowManagerState extends State<WindowManager> {
 
   @override
   void dispose() {
+    FlutterFrameTrace.detach();
     _windowMappedSubscription?.close();
     _windowUnmappedSubscription?.close();
     _monitorListSubscription?.close();

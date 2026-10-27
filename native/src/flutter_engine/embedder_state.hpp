@@ -34,6 +34,7 @@ struct EmbedderState {
 	EmbedderState(wlr_egl* flutter_gl_context, wlr_egl* flutter_resource_gl_context);
 
 	void run_engine();
+	void schedule_frame();
 
 	FlutterEngine get_engine() const;
 

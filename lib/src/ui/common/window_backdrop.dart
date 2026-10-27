@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
+import 'package:jdwm/src/util/flutter_frame_trace.dart';
 
 /// Disjoint backdrop areas outside a proven opaque rectangle.
 List<Rect> exposedBackdropRects(Rect bounds, Rect opaque) {
@@ -37,12 +38,14 @@ class WindowBackdrop extends SingleChildRenderObjectWidget {
 
   @override
   RenderWindowBackdrop createRenderObject(BuildContext context) =>
-      RenderWindowBackdrop(sigma, radius, contentKey, opaqueRect);
+      RenderWindowBackdrop(
+          windowBlurDisabled ? 0 : sigma, radius, contentKey, opaqueRect);
 
   @override
   void updateRenderObject(
       BuildContext context, RenderWindowBackdrop renderObject) {
-    renderObject.configure(sigma, radius, contentKey, opaqueRect);
+    renderObject.configure(
+        windowBlurDisabled ? 0 : sigma, radius, contentKey, opaqueRect);
   }
 }
 
@@ -118,6 +121,8 @@ class RenderWindowBackdrop extends RenderProxyBox {
       final bounds = Offset.zero & size;
       final clip = _radius.toRRect(bounds).scaleRadii();
       final regions = exposedBackdropRects(bounds, _coveredRect(clip));
+      FlutterFrameTrace.backdrop(bounds.width * bounds.height,
+          regions.fold(0.0, (area, rect) => area + rect.width * rect.height));
       context.pushClipRRect(true, offset, bounds, clip, (context, offset) {
         for (final region in regions) {
           context.pushClipRect(true, offset, region, (context, offset) {

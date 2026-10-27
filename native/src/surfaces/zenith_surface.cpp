@@ -1,4 +1,6 @@
 #include "opaque_region.hpp"
+#include "surface_commit_policy.hpp"
+#include "output/frame_timing_trace.hpp"
 #include <sys/ioctl.h>
 #include <xf86drm.h>
 #include <unistd.h>
@@ -75,6 +77,8 @@ void zenith_surface_commit(wl_listener* listener, void* data) {
 
 	auto commit_message = std::make_unique<SurfaceCommitMessage>();
 	commit_message->view_id = zenith_surface->id;
+	commit_message->texture_changed = surface_commit_updates_texture(surface->current.committed);
+	commit_message->frame_callback_pending = !wl_list_empty(&surface->current.frame_callback_list);
 
 	SurfaceRole role;
 	if (wlr_xdg_surface_try_from_wlr_surface(surface) != nullptr) {
@@ -383,6 +387,24 @@ int extract_fd_from_native_fence(EGLSyncKHR* sync_out) {
 void commit_surface(SurfaceCommitMessage* commit_message) {
 	auto* server = ZenithServer::instance();
 	size_t id = commit_message->view_id;
+	zenith::render::trace_frame_sample("surface-texture", "clients", 0, !commit_message->texture_changed);
+	if (!commit_message->texture_changed) {
+		// Keep the same registry frame and Flutter image for callback/metadata
+		// commits. Skia flushes and resets its GL context when resolving an
+		// invalidated external texture, even if the pixels have not changed.
+		// Retain the existing fence ordering and still deliver all geometry,
+		// viewport, input and opacity changes to Flutter.
+		commit_message->buffer.reset();
+		server->embedder_state->commit_surface(*commit_message);
+		if (commit_message->frame_callback_pending) {
+			// A client can ask for its next animation tick without changing
+			// pixels. Preserve the existing presented-frame callback path,
+			// but repaint with cached textures instead of invalidating them.
+			server->embedder_state->schedule_frame();
+		}
+		server->output_manager->schedule_compositor_frame();
+		return;
+	}
 
 	std::shared_ptr<SurfaceBufferChain<wlr_buffer>> buffer_chain;
 	auto it = server->surface_buffer_chains.find(id);
