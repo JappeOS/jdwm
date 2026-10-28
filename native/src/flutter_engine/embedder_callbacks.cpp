@@ -142,8 +142,6 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 		zenith::egl::set_flutter_frame_rendering_active(false);
 		return false;
 	}
-	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage,
-		present_info->frame_damage.damage ? present_info->frame_damage.num_rects : 0);
 	int ready_fence_fd = create_frame_ready_fence_fd();
 	if (ready_fence_fd == -1) {
 		static bool logged_sync_fallback = false;
@@ -154,12 +152,12 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 		glFinish();
 	}
 
-	bool success = commit_framebuffer(state, frame_damage, ready_fence_fd);
+	bool success = commit_framebuffer(state, ready_fence_fd);
 	zenith::egl::set_flutter_frame_rendering_active(false);
 	return success;
 }
 
-bool commit_framebuffer(EmbedderState* state, array_view<FlutterRect> damage, int ready_fence_fd) {
+bool commit_framebuffer(EmbedderState* state, int ready_fence_fd) {
 	ZenithServer* server = ZenithServer::instance();
 	auto swap_chain = std::move(state->raster_target);
 	state->raster_fbo = 0;
@@ -170,11 +168,11 @@ bool commit_framebuffer(EmbedderState* state, array_view<FlutterRect> damage, in
 		return false;
 	}
 
-	swap_chain->end_write(damage, ready_fence_fd);
-	
+	auto frame_damage = zenith::render::flutter_composition_damage(swap_chain->damage_history);
+	swap_chain->end_write({&frame_damage.rect, 1}, ready_fence_fd);
+
 	// Ensure freshly rendered frames are presented even if no input event
 	// (like pointer motion) occurs to trigger a frame.
-	const auto frame_damage = swap_chain->damage_history.normalize(damage);
 	zenith::render::trace_damage("frame", "flutter", frame_damage);
 	server->callable_queue.enqueue([server, swap_chain]() {
 		if (server->output_manager != nullptr &&
@@ -271,22 +269,4 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 	return FlutterTransformation{
 		  1.0, 0.0, 0.0, 0.0, -1.0, height, 0.0, 0.0, 1.0,
 	};
-}
-
-void flutter_populate_existing_damage(void* user_data, intptr_t fbo_id, FlutterDamage* existing_damage) {
-	auto* state = static_cast<EmbedderState*>(user_data);
-	auto target = state->raster_target;
-	zenith::render::Damage damage;
-	if (target) {
-		damage = state->raster_fbo == fbo_id
-			? zenith::render::flutter_buffer_repair(target->damage_history, target->repair_damage())
-			: target->damage_history.full(zenith::render::DamageReason::Invalid);
-	} else {
-		// No FBO exists: zero rectangles tells Flutter to force a full repaint.
-		*existing_damage = {sizeof(FlutterDamage), 0, nullptr};
-		return;
-	}
-	zenith::render::trace_damage("repair", "flutter", damage);
-	state->existing_damage_rect = damage.rect;
-	*existing_damage = {sizeof(FlutterDamage), 1, &state->existing_damage_rect};
 }

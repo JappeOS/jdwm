@@ -14,6 +14,7 @@
 #include "time.hpp"
 #include "multimonitor/multi_monitor_mode.hpp"
 #include "output/zenith_output_manager.hpp"
+#include "output/flutter_damage_policy.hpp"
 
 #include <unordered_map>  // for std::unordered_map
 #include <memory>         // for std::shared_ptr
@@ -159,10 +160,8 @@ void EmbedderState::configure_and_run_engine() {
 	config.open_gl.make_resource_current = flutter_make_resource_current;
 	config.open_gl.fbo_reset_after_present = true;
 	config.open_gl.surface_transformation = flutter_surface_transformation;
-	// Buffer repair history is tracked for every composition target, including
-	// the shared virtual desktop. An empty repair is an explicit empty rect.
-	config.open_gl.populate_existing_damage = flutter_populate_existing_damage;
-	wlr_log(WLR_INFO, "zenith: damage tracking enabled history=%zu force_full_repaint=%d buffer_repair=full_nonempty",
+	zenith::render::configure_flutter_damage(config.open_gl);
+	wlr_log(WLR_INFO, "zenith: damage tracking enabled history=%zu force_full_repaint=%d raster=full_scene frame_damage=full_scene",
 		zenith::render::DamageHistory::capacity, zenith::render::force_full_repaint());
 
 	FlutterTaskRunnerDescription platform_task_runner_description{};

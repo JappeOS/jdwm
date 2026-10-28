@@ -11,7 +11,7 @@ bool flutter_clear_current(void* userdata);
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info);
 
 struct EmbedderState;
-bool commit_framebuffer(EmbedderState* state, array_view<FlutterRect> view, int ready_fence_fd);
+bool commit_framebuffer(EmbedderState* state, int ready_fence_fd);
 
 uint32_t flutter_fbo_callback(void* userdata);
 
@@ -27,5 +27,3 @@ void flutter_platform_message_callback(const FlutterPlatformMessage* message, vo
 bool flutter_make_resource_current(void* userdata);
 
 FlutterTransformation flutter_surface_transformation(void* data);
-
-void flutter_populate_existing_damage(void* user_data, intptr_t fbo_id, FlutterDamage* existing_damage);

@@ -114,7 +114,6 @@ struct EmbedderState {
 	// Raster-thread-only transaction; pins a generation across output changes.
 	std::shared_ptr<SwapChain<wlr_gles2_buffer>> raster_target;
 	uint32_t raster_fbo = 0;
-	FlutterRect existing_damage_rect{};
 
 	// A function queue tied to the event loop.
 	CallableQueue callable_queue;
