@@ -5,6 +5,8 @@
 #include <string>
 #include <time.h>
 #include <unordered_map>
+#include <array>
+#include "damage_history.hpp"
 
 extern "C" {
 #include <wlr/util/log.h>
@@ -53,6 +55,35 @@ inline void trace_frame_sample(const char* stage, const char* output,
 	        output, stage, (unsigned long long) sample.count,
 	        double(sample.total) / double(sample.count) / 1e6,
 	        double(sample.maximum) / 1e6, (unsigned long long) sample.blocked);
+	sample = {};
+	sample.since = now;
+}
+
+inline void trace_damage(const char* stage, const char* output, const Damage& damage) {
+	if (!frame_timing_enabled())
+		return;
+
+	struct Stats {
+		uint64_t since = 0, count = 0, area = 0;
+		std::array<uint64_t, 7> reasons{};
+	};
+
+	thread_local std::unordered_map<std::string, Stats> stats;
+	auto& sample = stats[std::string(output) + ":" + stage];
+	const auto now = frame_trace_now();
+	if (!sample.since)
+		sample.since = now;
+	++sample.count;
+	sample.area += static_cast<uint64_t>(damage.area());
+	++sample.reasons[static_cast<size_t>(damage.reason)];
+	if (now - sample.since < 1'000'000'000ull)
+		return;
+	wlr_log(WLR_INFO, "zenith:damage output=%s stage=%s samples=%llu area=%llu "
+		"missing=%llu invalid=%llu first_use=%llu history_lost=%llu generation=%llu forced=%llu",
+		output, stage, (unsigned long long)sample.count, (unsigned long long)sample.area,
+		(unsigned long long)sample.reasons[1], (unsigned long long)sample.reasons[2],
+		(unsigned long long)sample.reasons[3], (unsigned long long)sample.reasons[4],
+		(unsigned long long)sample.reasons[5], (unsigned long long)sample.reasons[6]);
 	sample = {};
 	sample.since = now;
 }

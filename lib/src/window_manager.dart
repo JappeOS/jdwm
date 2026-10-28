@@ -83,7 +83,7 @@ class WindowManagerState extends State<WindowManager> {
   final Set<VoidCallback> _windowStateListeners = <VoidCallback>{};
   List<MonitorConfig> _effectiveMonitors = const [];
 
-  Widget? _clientCursor;
+  final _clientCursor = ValueNotifier<Widget?>(null);
   ProviderContainer? _backendContainer;
   ProviderSubscription? _windowMappedSubscription;
   ProviderSubscription? _windowUnmappedSubscription;
@@ -148,6 +148,7 @@ class WindowManagerState extends State<WindowManager> {
 
   @override
   void dispose() {
+    _clientCursor.dispose();
     FlutterFrameTrace.detach();
     _windowMappedSubscription?.close();
     _windowUnmappedSubscription?.close();
@@ -596,24 +597,20 @@ class WindowManagerState extends State<WindowManager> {
   GlobalKey? getRegionKey(String monitorId) => _regionKeys[monitorId];
 
   void setClientCursor(SystemMouseCursor cursor, Offset globalPosition) {
-    setState(() {
-      _clientCursor = Positioned(
-        left: globalPosition.dx.round().toDouble(),
-        top: globalPosition.dy.round().toDouble(),
-        child: FractionalTranslation(
-          translation: const Offset(-0.5, -0.5),
-          child: ClientCursor.get(cursor),
-        ),
-      );
-      setCursorVisible(false);
-    });
+    _clientCursor.value = Positioned(
+      left: globalPosition.dx.roundToDouble(),
+      top: globalPosition.dy.roundToDouble(),
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, -0.5),
+        child: ClientCursor.get(cursor),
+      ),
+    );
+    unawaited(setCursorVisible(false));
   }
 
   void endClientCursor() {
-    setState(() {
-      _clientCursor = null;
-      setCursorVisible(true);
-    });
+    _clientCursor.value = null;
+    unawaited(setCursorVisible(true));
   }
 
   Future<void> setCursorVisible(bool visible) async {
@@ -683,7 +680,8 @@ class WindowManagerState extends State<WindowManager> {
   /// Ensures z-order focus is updated once and backend keyboard focus stays
   /// single-owner (no two active backend windows).
   void requestFocus(WindowEntry entry) {
-    _hierarchyKey.currentState?.requestWindowFocus(entry);
+    final orderChanged =
+        _hierarchyKey.currentState?.requestWindowFocus(entry) ?? false;
 
     final container = _backendContainer;
     if (container == null) {
@@ -691,28 +689,37 @@ class WindowManagerState extends State<WindowManager> {
     }
 
     final targetViewId = entry.backendViewId;
-    if (targetViewId != null) {
-      container.read(platformApiProvider.notifier).activateWindow(
-            targetViewId,
-            true,
-          );
+    if (!orderChanged &&
+        targetViewId != null &&
+        container
+            .read(xdgToplevelStatesProvider(targetViewId))
+            .focusNode
+            .hasFocus) {
+      return;
     }
+    // FocusNode transitions own backend activation (_SurfaceFocus). Restoring
+    // keyboard focus remains necessary even if this window is already on top.
+    var keyboardChanged = false;
     for (final viewId in _backendWindows.keys) {
       final focusNode =
           container.read(xdgToplevelStatesProvider(viewId)).focusNode;
       if (targetViewId != null && viewId == targetViewId) {
         if (!focusNode.hasFocus) {
+          keyboardChanged = true;
           focusNode.requestFocus();
         }
       } else {
         if (focusNode.hasFocus) {
+          keyboardChanged = true;
           focusNode.unfocus();
         }
       }
     }
 
-    _prepareBackendMaximizeForWindow(entry);
-    _notifyWindowStateListeners();
+    if (orderChanged || keyboardChanged) {
+      _prepareBackendMaximizeForWindow(entry);
+      _notifyWindowStateListeners();
+    }
   }
 
   List<ManagedWindowInfo> getManagedWindowsByFocus() {
@@ -1077,9 +1084,19 @@ class WindowManagerState extends State<WindowManager> {
             ],
 
             // Layer 6: client cursor overlay
-            if (_clientCursor != null) ...[
-              _clientCursor!,
-            ]
+            Positioned.fill(
+              child: IgnorePointer(
+                child: RepaintBoundary(
+                  child: ValueListenableBuilder<Widget?>(
+                    valueListenable: _clientCursor,
+                    builder: (context, cursor, _) => Stack(
+                      clipBehavior: Clip.none,
+                      children: [if (cursor != null) cursor],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         );
 

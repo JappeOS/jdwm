@@ -7,6 +7,7 @@
 #include <mutex>
 #include "util/array_view.hpp"
 #include "third_party/embedder.h"
+#include "output/damage_history.hpp"
 
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
@@ -18,7 +19,7 @@ struct Slot {
 	~Slot();
 
 	std::shared_ptr<T> buffer;
-	std::vector<FlutterRect> damage_regions = {};
+	uint64_t generation = 0;
 	std::atomic<uint32_t> presentation_refs{0};
 	std::atomic<int> ready_fence_fd{-1};
 	std::atomic<uint64_t> ready_fence_set_ns{0};
@@ -38,7 +39,8 @@ private:
 
 template<class T>
 struct SwapChain {
-	explicit SwapChain(std::vector<std::shared_ptr<T>> buffers);
+	explicit SwapChain(std::vector<std::shared_ptr<T>> buffers, int width = 0, int height = 0);
+	zenith::render::DamageHistory damage_history;
 
 	std::mutex mutex = {};
 
@@ -52,7 +54,8 @@ struct SwapChain {
 	// holding the chain mutex. Readers on the Wayland thread never wait.
 	[[nodiscard]] T* start_write();
 
-	[[nodiscard]] array_view<FlutterRect> get_damage_regions();
+	[[nodiscard]] zenith::render::Damage repair_damage();
+	[[nodiscard]] zenith::render::Damage damage_since(uint64_t generation, uint64_t after, uint64_t through);
 
 	void end_write(array_view<FlutterRect> damage, int ready_fence_fd = -1);
 

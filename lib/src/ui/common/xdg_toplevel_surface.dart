@@ -1,3 +1,4 @@
+import 'package:jdwm/src/util/flutter_frame_trace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,7 +22,9 @@ class XdgToplevelSurface extends ConsumerWidget {
       onVisibilityChanged: (VisibilityInfo info) {
         bool visible = info.visibleFraction > 0;
         if (ref.context.mounted) {
-          ref.read(xdgToplevelStatesProvider(viewId).notifier).requestVisible(visible);
+          ref
+              .read(xdgToplevelStatesProvider(viewId).notifier)
+              .requestVisible(visible);
         }
       },
       child: _SurfaceFocus(
@@ -40,7 +43,6 @@ class _SurfaceFocus extends ConsumerWidget {
   final Widget child;
 
   const _SurfaceFocus({
-    super.key,
     required this.viewId,
     required this.child,
   });
@@ -49,12 +51,18 @@ class _SurfaceFocus extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Shortcuts(
       shortcuts: {
-        const SingleActivator(LogicalKeyboardKey.tab): DisableFocusTraversalIntent(),
-        const SingleActivator(LogicalKeyboardKey.tab, shift: true): DisableFocusTraversalIntent(),
-        const SingleActivator(LogicalKeyboardKey.arrowLeft): DisableFocusTraversalIntent(),
-        const SingleActivator(LogicalKeyboardKey.arrowRight): DisableFocusTraversalIntent(),
-        const SingleActivator(LogicalKeyboardKey.arrowDown): DisableFocusTraversalIntent(),
-        const SingleActivator(LogicalKeyboardKey.arrowUp): DisableFocusTraversalIntent(),
+        const SingleActivator(LogicalKeyboardKey.tab):
+            DisableFocusTraversalIntent(),
+        const SingleActivator(LogicalKeyboardKey.tab, shift: true):
+            DisableFocusTraversalIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft):
+            DisableFocusTraversalIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowRight):
+            DisableFocusTraversalIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowDown):
+            DisableFocusTraversalIntent(),
+        const SingleActivator(LogicalKeyboardKey.arrowUp):
+            DisableFocusTraversalIntent(),
       },
       child: Actions(
         actions: {
@@ -62,11 +70,13 @@ class _SurfaceFocus extends ConsumerWidget {
         },
         child: Consumer(
           builder: (BuildContext context, WidgetRef ref, Widget? child) {
-            final focusNode = ref.watch(xdgToplevelStatesProvider(viewId)).focusNode;
+            final focusNode =
+                ref.watch(xdgToplevelStatesProvider(viewId)).focusNode;
 
             return Focus(
               focusNode: focusNode,
               onFocusChange: (bool focused) {
+                FlutterFrameTrace.activationChanged();
                 final platformApi = ref.read(platformApiProvider.notifier);
                 if (focused) {
                   platformApi.activateWindow(viewId, true);
@@ -89,15 +99,15 @@ class _PointerListener extends ConsumerWidget {
   final Widget child;
 
   const _PointerListener({
-    Key? key,
     required this.viewId,
     required this.child,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Listener(
-      onPointerDown: (_) => ref.read(xdgToplevelStatesProvider(viewId)).focusNode.requestFocus(),
+      onPointerDown: (_) =>
+          ref.read(xdgToplevelStatesProvider(viewId)).focusNode.requestFocus(),
       child: child,
     );
   }

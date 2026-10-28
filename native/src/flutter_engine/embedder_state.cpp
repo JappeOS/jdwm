@@ -159,13 +159,11 @@ void EmbedderState::configure_and_run_engine() {
 	config.open_gl.make_resource_current = flutter_make_resource_current;
 	config.open_gl.fbo_reset_after_present = true;
 	config.open_gl.surface_transformation = flutter_surface_transformation;
-	// Safe partial repaint policy:
-	// - Single-output modes can reuse prior damage to reduce raster work.
-	// - Extend mode keeps full-frame rasterization because one shared render
-	//   target is sampled by multiple outputs with different source boxes.
-	const bool extend_mode =
-		ZenithServer::instance()->output_manager->mode() == multimonitor::MultiMonitorMode::Extend;
-	config.open_gl.populate_existing_damage = extend_mode ? nullptr : flutter_populate_existing_damage;
+	// Buffer repair history is tracked for every composition target, including
+	// the shared virtual desktop. An empty repair is an explicit empty rect.
+	config.open_gl.populate_existing_damage = flutter_populate_existing_damage;
+	wlr_log(WLR_INFO, "zenith: damage tracking enabled history=%zu force_full_repaint=%d",
+		zenith::render::DamageHistory::capacity, zenith::render::force_full_repaint());
 
 	FlutterTaskRunnerDescription platform_task_runner_description{};
 	platform_task_runner_description.struct_size = sizeof(FlutterTaskRunnerDescription);

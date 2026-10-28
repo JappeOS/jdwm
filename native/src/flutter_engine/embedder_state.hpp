@@ -29,6 +29,8 @@ extern "C" {
 }
 
 struct ZenithServer;
+struct wlr_gles2_buffer;
+template<class T> struct SwapChain;
 
 struct EmbedderState {
 	EmbedderState(wlr_egl* flutter_gl_context, wlr_egl* flutter_resource_gl_context);
@@ -108,6 +110,11 @@ struct EmbedderState {
 	// Keeps alive surface buffers, even after the surfaces are destroyed.
 	// This allows Flutter to play closing animations on surfaces that don't exist anymore.
 	ExternalTextureRegistry external_textures;
+
+	// Raster-thread-only transaction; pins a generation across output changes.
+	std::shared_ptr<SwapChain<wlr_gles2_buffer>> raster_target;
+	uint32_t raster_fbo = 0;
+	FlutterRect existing_damage_rect{};
 
 	// A function queue tied to the event loop.
 	CallableQueue callable_queue;

@@ -119,20 +119,6 @@ static void log_cursor_mode_transition(ZenithOutput* output) {
 	}
 }
 
-static void set_scene_buffer_with_damage(
-	ZenithOutput* output, wlr_buffer* buffer, const std::vector<FlutterRect>& damage) {
-	if (output->scene_buffer == nullptr) {
-		return;
-	}
-	// wlroots 0.19 doesn't expose scene damage import for external buffers in
-	// this path, but we can still skip redundant rebinds when the producer
-	// reports no damage and the underlying buffer object is unchanged.
-	if (output->last_scene_buffer == buffer && damage.empty()) {
-		return;
-	}
-	wlr_scene_buffer_set_buffer(output->scene_buffer, buffer);
-}
-
 static bool output_source_box_in_extend_space(
 	ZenithServer* server, ZenithOutput* output, struct wlr_box* source_box_out) {
 	if (server == nullptr ||
@@ -153,26 +139,6 @@ static bool output_source_box_in_extend_space(
 	source_box_out->width = box.width;
 	source_box_out->height = box.height;
 	return box.width > 0 && box.height > 0;
-}
-
-static bool damage_intersects_output_source_box(
-	const std::vector<FlutterRect>& damage_regions, const struct wlr_box& output_source_box) {
-	if (damage_regions.empty() || output_source_box.width <= 0 || output_source_box.height <= 0) {
-		return false;
-	}
-
-	const double left = static_cast<double>(output_source_box.x);
-	const double top = static_cast<double>(output_source_box.y);
-	const double right = static_cast<double>(output_source_box.x + output_source_box.width);
-	const double bottom = static_cast<double>(output_source_box.y + output_source_box.height);
-
-	for (const auto& rect : damage_regions) {
-		if (rect.right <= left || rect.left >= right || rect.bottom <= top || rect.top >= bottom) {
-			continue;
-		}
-		return true;
-	}
-	return false;
 }
 
 static void release_presented_slot(ZenithOutput* output) {
@@ -321,7 +287,7 @@ void output_frame(wl_listener* listener, void* data) {
 
 	log_cursor_mode_transition(output);
 
-	SwapChain<wlr_gles2_buffer>* source_swap_chain =
+	auto source_swap_chain =
 		server->output_manager->composition_source_swap_chain();
 	if (source_swap_chain == nullptr || output->scene_output == nullptr || output->scene_buffer == nullptr) {
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
@@ -352,6 +318,7 @@ void output_frame(wl_listener* listener, void* data) {
 		// Reuse the already-presented slot to clear old cursor pixels.
 		if (cursor_repaint_requested &&
 		    output->presented_slot != nullptr &&
+		    output->presented_slot->generation == source_swap_chain->damage_history.generation() &&
 		    output->presented_slot->buffer != nullptr &&
 		    output->presented_slot->is_ready_nonblocking()) {
 			if (zenith_cursor_debug_enabled()) {
@@ -372,9 +339,9 @@ void output_frame(wl_listener* listener, void* data) {
 	}
 	wlr_gles2_buffer* source_buffer = source_slot->buffer.get();
 	const bool extend_mode = server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend;
-	const auto& frame_damage = source_slot->damage_regions;
 	const uint64_t source_frame_serial = source_slot->frame_serial.load(std::memory_order_acquire);
-	const bool has_new_source_frame = source_frame_serial != output->last_presented_source_serial;
+	const bool same_generation = output->last_source_generation == source_slot->generation;
+	const bool has_new_source_frame = !same_generation || source_frame_serial > output->last_presented_source_serial;
 	zenith::render::trace_frame_sample("source-repeat", output->wlr_output->name, 0, !has_new_source_frame);
 
 	wlr_buffer* source_wlr_buffer = source_buffer->buffer;
@@ -402,52 +369,60 @@ void output_frame(wl_listener* listener, void* data) {
 			output->last_dest_height != source_box_i.height;
 	}
 
-	bool output_region_damaged = has_new_source_frame;
-	// If intermediate frames were skipped, their damage is not in this
-	// frame's damage list. Conservatively repaint the whole output.
-	const bool consecutive_frame = source_frame_serial == output->last_presented_source_serial + 1;
-	if (extend_mode && have_source_box && has_new_source_frame && consecutive_frame && !frame_damage.empty()) {
-		output_region_damaged = damage_intersects_output_source_box(frame_damage, source_box_i);
-	}
-
-	if (extend_mode) {
-		const bool force_present =
-			!have_source_box ||
-			output->last_scene_buffer == nullptr ||
-			source_mapping_changed ||
-			output->cursor_frame_pending ||
-			output->cursor_cleanup_pending ||
-			software_cursor_active(output->wlr_output);
-		if (!force_present && !output_region_damaged) {
-			output->last_presented_source_serial = source_frame_serial;
-			if (is_vsync_driver) {
-				vsync_callback(server, output->wlr_output);
-			}
+	// An output may skip several Flutter frames. Repair from its own accepted
+	// serial, not the selected slot's last frame delta. All snapshots are owned.
+	auto damage = source_swap_chain->damage_since(output->last_source_generation,
+		output->last_presented_source_serial, source_frame_serial);
+	if (same_generation && source_frame_serial < output->last_presented_source_serial) {
+		// Never regress output content. Cursor-only retries use the retained
+		// displayed slot; intervening accepted frames had no output-local damage.
+		if (!cursor_repaint_requested || !output->presented_slot) {
+			if (is_vsync_driver) vsync_callback(server, output->wlr_output);
 			return;
 		}
+
+		source_slot = output->presented_slot;
+		source_wlr_buffer = source_slot->buffer->buffer;
+		damage = {};
 	}
 
-	if (extend_mode) {
-		const bool force_scene_rebind_for_cursor_cleanup = output->cursor_cleanup_pending;
-		if (source_wlr_buffer != output->last_scene_buffer || output_region_damaged ||
-		    source_mapping_changed || force_scene_rebind_for_cursor_cleanup) {
-			if (force_scene_rebind_for_cursor_cleanup) {
-				// Force damage on this output when scrubbing stale software-cursor
-				// pixels left behind during cross-output cursor moves.
-				if (zenith_cursor_debug_enabled()) {
-					wlr_log(
-						WLR_INFO,
-						"zenith:cursor cleanup output='%s' forcing scene rebind",
-						output->wlr_output->name
-					);
-				}
-				wlr_scene_buffer_set_buffer(output->scene_buffer, nullptr);
-			}
-			wlr_scene_buffer_set_buffer(output->scene_buffer, source_wlr_buffer);
-		}
-	} else {
-		set_scene_buffer_with_damage(output, source_wlr_buffer, frame_damage);
+	if (zenith::render::force_full_repaint())
+		damage = source_swap_chain->damage_history.full(zenith::render::DamageReason::Forced);
+
+	if (source_mapping_changed || output->last_scene_buffer == nullptr || output->cursor_cleanup_pending)
+		damage = source_swap_chain->damage_history.full(zenith::render::DamageReason::Generation);
+
+	const bool output_region_damaged = have_source_box
+		? damage.intersects({double(source_box_i.x), double(source_box_i.y),
+		                    double(source_box_i.x + source_box_i.width), double(source_box_i.y + source_box_i.height)})
+		: !damage.empty();
+
+	const bool force_present = !same_generation || output->last_scene_buffer == nullptr ||
+		source_mapping_changed || output->cursor_frame_pending || output->cursor_cleanup_pending ||
+		output->scene_commit_pending || software_cursor_active(output->wlr_output);
+
+	if (!force_present && !output_region_damaged) {
+		output->last_presented_source_serial = std::max(output->last_presented_source_serial, source_frame_serial);
+		output->last_source_generation = source_slot->generation;
+		// Callback-only client commits must progress even when no pixels changed.
+		notify_legacy_clients_frame_done(server, output->wlr_output);
+		if (is_vsync_driver)
+			vsync_callback(server, output->wlr_output);
+		return;
 	}
+
+	zenith::render::trace_damage("output", output->wlr_output->name, damage);
+	pixman_region32_t region;
+	pixman_region32_init(&region);
+	if (!damage.empty()) {
+		pixman_region32_union_rect(&region, &region, int(damage.rect.left), int(damage.rect.top),
+			unsigned(damage.rect.right - damage.rect.left), unsigned(damage.rect.bottom - damage.rect.top));
+	}
+
+	wlr_scene_buffer_set_buffer_with_damage(output->scene_buffer, source_wlr_buffer, &region);
+	output->scene_slot = source_slot;
+	output->scene_commit_pending = true;
+	pixman_region32_fini(&region);
 
 	if (extend_mode) {
 		if (have_source_box) {
@@ -485,9 +460,12 @@ void output_frame(wl_listener* listener, void* data) {
 		return;
 	}
 	output->last_scene_buffer = source_wlr_buffer;
+	output->scene_commit_pending = false;
 	output->cursor_frame_pending = false;
 	output->cursor_cleanup_pending = false;
-	output->last_presented_source_serial = source_frame_serial;
+	output->last_presented_source_serial = same_generation
+		? std::max(output->last_presented_source_serial, source_frame_serial) : source_frame_serial;
+	output->last_source_generation = source_slot->generation;
 	if (extend_mode && have_source_box) {
 		output->last_source_box = source_box_i;
 		output->has_last_source_box = true;
@@ -564,7 +542,7 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 		return 0;
 	}
 	uint64_t now = FlutterEngineGetCurrentTime();
-	auto* chain = server->output_manager->composition_source_swap_chain();
+	auto chain = server->output_manager->composition_source_swap_chain();
 	const bool frame_ready = chain != nullptr && chain->latest_frame_ready();
 	auto dispatch = embedder_state->poll_vsync(
 		now, zenith::render::output_frame_interval_ns(timing_output), frame_ready);
@@ -586,7 +564,7 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 	return 0;
 }
 
-std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
+std::shared_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 	wlr_output* wlr_output, int width_override, int height_override) {
 	ZenithServer* server = ZenithServer::instance();
 
@@ -631,7 +609,13 @@ std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 
 	wlr_log(WLR_INFO, "zenith: swapchain output='%s' size=%dx%d buffers=%zu",
 	        wlr_output->name, width, height, buffers.size());
-	return std::make_unique<SwapChain<wlr_gles2_buffer>>(buffers);
+
+	// Last ownership may be released by the raster thread after a hotplug.
+	// Buffer destruction belongs to the Wayland thread.
+	return {new SwapChain<wlr_gles2_buffer>(buffers, width, height),
+	        [server](SwapChain<wlr_gles2_buffer>* chain) {
+		        server->callable_queue.enqueue([chain] { delete chain; });
+	        }};
 }
 
 void output_destroy(wl_listener* listener, void* data) {
@@ -670,6 +654,9 @@ void output_destroy(wl_listener* listener, void* data) {
 		wlr_scene_output_destroy(output->scene_output);
 		output->scene_output = nullptr;
 	}
+
+	output->scene_slot.reset();
+	output->scene_commit_pending = false;
 	output->last_scene_buffer = nullptr;
 	output->cursor_frame_pending = false;
 	output->cursor_cleanup_pending = false;
@@ -769,6 +756,7 @@ void ZenithOutput::recreate_swapchain(int width, int height) {
 		wlr_log(WLR_ERROR, "zenith: failed to recreate swapchain for output '%s'", wlr_output->name);
 		return;
 	}
+
 	swap_chain = std::move(new_swap_chain);
 	release_presented_slot(this);
 	swapchain_width = width;
@@ -785,4 +773,7 @@ void ZenithOutput::recreate_swapchain(int width, int height) {
 	if (scene_buffer != nullptr) {
 		wlr_scene_buffer_set_buffer(scene_buffer, nullptr);
 	}
+
+	scene_slot.reset();
+	scene_commit_pending = false;
 }

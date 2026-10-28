@@ -19,6 +19,15 @@ class FlutterFrameTrace {
   static int _backdrops = 0, _optimized = 0;
   static double _area = 0, _filteredArea = 0;
   static int _windows = 0, _culled = 0;
+  static int _focusChanges = 0, _activations = 0;
+  static void focusChanged() {
+    if (frameTimingTraceEnabled && _owners > 0) _focusChanges++;
+  }
+
+  static void activationChanged() {
+    if (frameTimingTraceEnabled && _owners > 0) _activations++;
+  }
+
   static double _windowArea = 0, _visibleArea = 0;
 
   static void occlusion(Rect bounds, List<Rect> visible) {
@@ -73,7 +82,8 @@ class FlutterFrameTrace {
         'backdrop_paints=$_backdrops backdrop_optimized=$_optimized '
         'backdrop_area=${_area.round()} filtered_area=${_filteredArea.round()} '
         'occlusion_windows=$_windows occlusion_culled=$_culled '
-        'window_area=${_windowArea.round()} visible_area=${_visibleArea.round()}');
+        'window_area=${_windowArea.round()} visible_area=${_visibleArea.round()} '
+        'focus_changes=$_focusChanges activation_changes=$_activations');
     _reset();
   }
 
@@ -82,6 +92,7 @@ class FlutterFrameTrace {
     _backdrops = _optimized = 0;
     _area = _filteredArea = 0;
     _windows = _culled = 0;
+    _focusChanges = _activations = 0;
     _windowArea = _visibleArea = 0;
     _clock.reset();
   }

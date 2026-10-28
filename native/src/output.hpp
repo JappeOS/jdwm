@@ -45,12 +45,17 @@ struct ZenithOutput {
 	int last_dest_width = 0;
 	int last_dest_height = 0;
 	uint64_t last_presented_source_serial = 0;
+	uint64_t last_source_generation = 0;
 	uint64_t last_frame_commit_ns = 0;
 	int swapchain_width = 0;
 	int swapchain_height = 0;
 
-	std::unique_ptr<SwapChain<wlr_gles2_buffer>> swap_chain;
+	std::shared_ptr<SwapChain<wlr_gles2_buffer>> swap_chain;
 	std::shared_ptr<Slot<wlr_gles2_buffer>> presented_slot = nullptr;
+	// The scene may retain a newly bound source across a deferred/failed commit.
+	// Keep its read lease independently of the previously displayed source.
+	std::shared_ptr<Slot<wlr_gles2_buffer>> scene_slot;
+	bool scene_commit_pending = false;
 
 	bool enable();
 
@@ -60,7 +65,7 @@ struct ZenithOutput {
 	void recreate_swapchain(int width, int height);
 };
 
-std::unique_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
+std::shared_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 	struct wlr_output* wlr_output, int width_override = 0, int height_override = 0);
 
 /*

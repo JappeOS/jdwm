@@ -17,7 +17,7 @@ class WindowEntry extends ChangeNotifier {
   final Widget content;
   WindowChromeMode _chromeMode;
   final Size minSize;
-  late Rect _windowRect;
+  Rect _windowRect = Rect.zero;
   Widget? _toolbar;
   bool _maximized = false;
   bool _minimized = false;
@@ -44,27 +44,30 @@ class WindowEntry extends ChangeNotifier {
   WindowDock get windowDock => _windowDock;
 
   set monitorId(String? value) {
+    if (_monitorId == value) return;
     _monitorId = value;
     notifyListeners();
   }
 
   set title(String value) {
+    if (_title == value) return;
     _title = value;
     notifyListeners();
   }
 
   set icon(ImageProvider value) {
+    if (_icon == value) return;
     _icon = value;
     notifyListeners();
   }
 
   set usesToolbar(bool value) {
-    _chromeMode =
+    chromeMode =
         value ? WindowChromeMode.decorated : WindowChromeMode.borderless;
-    notifyListeners();
   }
 
   set chromeMode(WindowChromeMode value) {
+    if (_chromeMode == value) return;
     _chromeMode = value;
     if (value == WindowChromeMode.decorated && _toolbar == null) {
       _toolbar = const DefaultWindowToolbar();
@@ -73,31 +76,37 @@ class WindowEntry extends ChangeNotifier {
   }
 
   set windowRect(Rect value) {
-    _windowRect = Rect.fromLTRB(
+    final aligned = Rect.fromLTRB(
       value.left.roundToDouble(),
       value.top.roundToDouble(),
       value.right.roundToDouble(),
       value.bottom.roundToDouble(),
     );
+    if (_windowRect == aligned) return;
+    _windowRect = aligned;
     notifyListeners();
   }
 
   set toolbar(Widget? value) {
+    if (_toolbar == value) return;
     _toolbar = value;
     notifyListeners();
   }
 
   set maximized(bool value) {
+    if (_maximized == value) return;
     _maximized = value;
     notifyListeners();
   }
 
   set minimized(bool value) {
+    if (_minimized == value) return;
     _minimized = value;
     notifyListeners();
   }
 
   set windowDock(WindowDock value) {
+    if (_windowDock == value) return;
     _windowDock = value;
     notifyListeners();
   }

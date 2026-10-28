@@ -1,10 +1,10 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'window.dart';
 import 'window_entry.dart';
 import 'ui/common/window_occlusion_stack.dart';
+import 'util/flutter_frame_trace.dart';
 
 /// The single window stack. There is exactly one [WindowHierarchy] in the
 /// widget tree (owned by [WindowManager]). It maintains the
@@ -26,12 +26,14 @@ class WindowHierarchy extends StatefulWidget {
 }
 
 class WindowHierarchyState extends State<WindowHierarchy> {
-  final List<WindowEntry> _entries = [];
+  final Map<WindowEntryId, WindowEntry> _entries = {};
+  List<WindowEntry>? _ordered;
   final List<WindowEntryId> _focusTree = [];
   final Map<WindowEntryId, GlobalKey> _windowKeys = {};
 
   void pushWindowEntry(WindowEntry entry) {
-    _entries.add(entry);
+    _entries[entry.id] = entry;
+    _ordered = null;
     _focusTree.add(entry.id);
     _windowKeys[entry.id] = GlobalKey();
     if (mounted) {
@@ -40,7 +42,8 @@ class WindowHierarchyState extends State<WindowHierarchy> {
   }
 
   void popWindowEntry(WindowEntry entry) {
-    _entries.removeWhere((e) => e.id == entry.id);
+    _entries.remove(entry.id);
+    _ordered = null;
     _focusTree.remove(entry.id);
     _windowKeys.remove(entry.id);
     if (mounted) {
@@ -48,33 +51,33 @@ class WindowHierarchyState extends State<WindowHierarchy> {
     }
   }
 
-  void requestWindowFocus(WindowEntry entry) {
+  bool requestWindowFocus(WindowEntry entry) {
+    if (!_entries.containsKey(entry.id) || _focusTree.lastOrNull == entry.id) {
+      return false;
+    }
+    _ordered = null;
+    FlutterFrameTrace.focusChanged();
     _focusTree.remove(entry.id);
     _focusTree.add(entry.id);
     if (mounted) {
       setState(() {});
     }
+    return true;
   }
 
-  List<WindowEntry> get windows => _entries;
+  List<WindowEntry> get windows => List.unmodifiable(_entries.values);
 
-  /// Windows ordered by focus (back to front).
-  List<WindowEntry> get entriesByFocus {
-    final result = <WindowEntry>[];
-    for (final id in _focusTree) {
-      final entry = _entries.where((e) => e.id == id).firstOrNull;
-      if (entry != null) result.add(entry);
-    }
-    return result;
-  }
+  WindowEntry? get focusedEntry => _entries[_focusTree.lastOrNull];
+
+  /// Cached immutable snapshot; only membership and z-order invalidate it.
+  List<WindowEntry> get entriesByFocus => _ordered ??= List.unmodifiable(
+      _focusTree.map((id) => _entries[id]).whereType<WindowEntry>());
 
   @override
   Widget build(BuildContext context) {
     return Provider<WindowHierarchyState>.value(
       value: this,
-      updateShouldNotify: (previous, current) =>
-          !listEquals(previous._entries, current._entries) ||
-          !listEquals(previous._focusTree, current._focusTree),
+      updateShouldNotify: (previous, current) => true,
       builder: (context, _) {
         final ordered = entriesByFocus;
         return WindowOcclusionStack(

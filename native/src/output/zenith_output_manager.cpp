@@ -100,48 +100,6 @@ static bool output_has_visible_cursor(struct wlr_output* wlr_output) {
 	return false;
 }
 
-static bool output_box_in_source_space(
-	ZenithServer* server, ZenithOutput* output, struct wlr_box* source_box_out) {
-	if (server == nullptr ||
-	    output == nullptr ||
-	    output->wlr_output == nullptr ||
-	    server->output_layout == nullptr ||
-	    source_box_out == nullptr) {
-		return false;
-	}
-
-	struct wlr_box extents = {};
-	struct wlr_box output_box = {};
-	wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
-	wlr_output_layout_get_box(server->output_layout, output->wlr_output, &output_box);
-
-	source_box_out->x = output_box.x - extents.x;
-	source_box_out->y = output_box.y - extents.y;
-	source_box_out->width = output_box.width;
-	source_box_out->height = output_box.height;
-	return source_box_out->width > 0 && source_box_out->height > 0;
-}
-
-static bool damage_intersects_output_box(
-	const std::vector<FlutterRect>& damage, const struct wlr_box& output_box) {
-	if (damage.empty() || output_box.width <= 0 || output_box.height <= 0) {
-		return false;
-	}
-
-	const double left = static_cast<double>(output_box.x);
-	const double top = static_cast<double>(output_box.y);
-	const double right = static_cast<double>(output_box.x + output_box.width);
-	const double bottom = static_cast<double>(output_box.y + output_box.height);
-
-	for (const auto& rect : damage) {
-		if (rect.right <= left || rect.left >= right || rect.bottom <= top || rect.top >= bottom) {
-			continue;
-		}
-		return true;
-	}
-	return false;
-}
-
 static void get_layout_extents_or_output(
 	ZenithServer* server, ZenithOutput* fallback_output, int* width, int* height) {
 	*width = 0;
@@ -287,6 +245,7 @@ void ZenithOutputManager::ensure_composition_target() const {
 	ZenithOutput* format_output = current_render_output();
 	if (format_output == nullptr || format_output->wlr_output == nullptr) {
 		extend_composition_swap_chain_.reset();
+		publish_composition_target();
 		extend_composition_format_output_ = nullptr;
 		extend_composition_width_ = 0;
 		extend_composition_height_ = 0;
@@ -300,10 +259,22 @@ void ZenithOutputManager::ensure_composition_target() const {
 		return;
 	}
 
+	// A layout/scale/transform change starts a fresh coordinate generation,
+	// even when the virtual framebuffer dimensions happen to stay unchanged.
+	std::vector<OutputMapping> mapping;
+	for (const auto& output : server_->outputs) {
+		if (!output || !output->wlr_output)
+			continue;
+		wlr_box box{};
+		wlr_output_layout_get_box(server_->output_layout, output->wlr_output, &box);
+		mapping.push_back({box.x, box.y, box.width, box.height,
+			output->wlr_output->scale, output->wlr_output->transform, output->wlr_output->enabled});
+	}
+
 	const bool format_changed = extend_composition_format_output_ != format_output;
 	const bool size_changed =
 		extend_composition_width_ != width || extend_composition_height_ != height;
-	if (extend_composition_swap_chain_ == nullptr || format_changed || size_changed) {
+	if (extend_composition_swap_chain_ == nullptr || format_changed || size_changed || mapping != composition_mapping_) {
 		auto new_swap_chain =
 			create_output_swap_chain(format_output->wlr_output, width, height);
 		if (new_swap_chain == nullptr) {
@@ -317,6 +288,8 @@ void ZenithOutputManager::ensure_composition_target() const {
 			return;
 		}
 		extend_composition_swap_chain_ = std::move(new_swap_chain);
+		publish_composition_target();
+		composition_mapping_ = std::move(mapping);
 		extend_composition_format_output_ = format_output;
 		extend_composition_width_ = width;
 		extend_composition_height_ = height;
@@ -349,6 +322,7 @@ void ZenithOutputManager::send_single_output_metrics(ZenithServer* server, Zenit
 	if (server == nullptr || output == nullptr || output->wlr_output == nullptr) {
 		return;
 	}
+	server->output_manager->publish_composition_target();
 	server->composition_source_height_cache.store(output->wlr_output->height, std::memory_order_release);
 	if (server->embedder_state == nullptr) {
 		return;
@@ -469,6 +443,7 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 		server_->output = nullptr;
 		extend_composition_format_output_ = nullptr;
 		extend_composition_swap_chain_.reset();
+		publish_composition_target();
 		extend_composition_width_ = 0;
 		extend_composition_height_ = 0;
 		update_xwayland_workareas_for_layout(server_);
@@ -652,41 +627,6 @@ void ZenithOutputManager::schedule_compositor_frame() const {
 	}
 }
 
-void ZenithOutputManager::schedule_compositor_frame(const std::vector<FlutterRect>& frame_damage) const {
-	if (mode_ != multimonitor::MultiMonitorMode::Extend || frame_damage.empty()) {
-		schedule_compositor_frame();
-		return;
-	}
-
-	bool scheduled_any = false;
-	for (const auto& output : server_->outputs) {
-		if (output == nullptr || output->wlr_output == nullptr) {
-			continue;
-		}
-		struct wlr_box source_box = {};
-		if (!output_box_in_source_space(server_, output.get(), &source_box)) {
-			continue;
-		}
-		if (!damage_intersects_output_box(frame_damage, source_box)) {
-			continue;
-		}
-		schedule_output_frame(output.get(), false);
-		scheduled_any = true;
-	}
-
-	ZenithOutput* driver_output = vsync_driver_output();
-	if (driver_output != nullptr && driver_output->wlr_output != nullptr) {
-		schedule_output_frame(driver_output, true);
-		scheduled_any = true;
-	}
-
-	if (!scheduled_any) {
-		// Conservative fallback: if damage metadata is inconsistent, don't risk
-		// stalling output updates.
-		schedule_compositor_frame();
-	}
-}
-
 void ZenithOutputManager::set_display_enabled(bool enable) const {
 	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
 		for (const auto& output : server_->outputs) {
@@ -699,6 +639,9 @@ void ZenithOutputManager::set_display_enabled(bool enable) const {
 				output->disable();
 			}
 		}
+		ensure_composition_target();
+		if (enable)
+			schedule_compositor_frame();
 		return;
 	}
 	if (server_->output == nullptr) {
@@ -709,6 +652,9 @@ void ZenithOutputManager::set_display_enabled(bool enable) const {
 	} else {
 		server_->output->disable();
 	}
+	publish_composition_target();
+	if (enable)
+		schedule_compositor_frame();
 }
 
 void ZenithOutputManager::update_active_output_from_cursor(double x, double y) const {
@@ -755,15 +701,18 @@ void ZenithOutputManager::schedule_output_frame(ZenithOutput* output, bool force
 	wlr_output_schedule_frame(output->wlr_output);
 }
 
-SwapChain<wlr_gles2_buffer>* ZenithOutputManager::composition_source_swap_chain() const {
+std::shared_ptr<SwapChain<wlr_gles2_buffer>> ZenithOutputManager::composition_source_swap_chain() const {
+	return std::atomic_load(&published_target_);
+}
+
+void ZenithOutputManager::publish_composition_target() const {
+	std::shared_ptr<SwapChain<wlr_gles2_buffer>> target;
 	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		return extend_composition_swap_chain_.get();
+		target = extend_composition_swap_chain_;
+	} else if (server_->output && server_->output->wlr_output->enabled) {
+		target = server_->output->swap_chain;
 	}
-	ZenithOutput* render_output = current_render_output();
-	if (render_output == nullptr || render_output->swap_chain == nullptr) {
-		return nullptr;
-	}
-	return render_output->swap_chain.get();
+	std::atomic_store(&published_target_, std::move(target));
 }
 
 int ZenithOutputManager::composition_source_width() const {

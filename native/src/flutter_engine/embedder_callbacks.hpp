@@ -10,11 +10,12 @@ bool flutter_clear_current(void* userdata);
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info);
 
-bool commit_framebuffer(array_view<FlutterRect> view, int ready_fence_fd);
+struct EmbedderState;
+bool commit_framebuffer(EmbedderState* state, array_view<FlutterRect> view, int ready_fence_fd);
 
 uint32_t flutter_fbo_callback(void* userdata);
 
-GLuint attach_framebuffer();
+GLuint attach_framebuffer(EmbedderState* state);
 
 void flutter_vsync_callback(void* userdata, intptr_t baton);
 

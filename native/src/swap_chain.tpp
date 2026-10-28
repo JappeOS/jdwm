@@ -108,11 +108,13 @@ int Slot<T>::duplicate_ready_fence() {
 }
 
 template<class T>
-SwapChain<T>::SwapChain(std::vector<std::shared_ptr<T>> buffers) {
+SwapChain<T>::SwapChain(std::vector<std::shared_ptr<T>> buffers, int width, int height)
+	: damage_history(width, height) {
 	assert(buffers.size() >= 4);
 	slots.reserve(buffers.size());
 	for (const auto& buffer : buffers) {
 		slots.emplace_back(std::make_shared<Slot<T>>(buffer));
+		slots.back()->generation = damage_history.generation();
 	}
 	write_buffer = slots[slots.size() - 1];
 }
@@ -194,13 +196,19 @@ bool SwapChain<T>::latest_frame_ready() {
 }
 
 template<class T>
-array_view<FlutterRect> SwapChain<T>::get_damage_regions() {
+zenith::render::Damage SwapChain<T>::repair_damage() {
 	std::scoped_lock lock(mutex);
-	if (write_buffer == nullptr) {
-		return array_view<FlutterRect>(nullptr, 0);
-	}
-	auto& damage = write_buffer->damage_regions;
-	return array_view<FlutterRect>(damage.data(), damage.size());
+	if (zenith::render::force_full_repaint())
+		return damage_history.full(zenith::render::DamageReason::Forced);
+	if (!write_in_progress || !write_buffer)
+		return damage_history.full(zenith::render::DamageReason::Invalid);
+	return damage_history.since(damage_history.generation(), write_buffer->frame_serial.load(), damage_history.latest());
+}
+
+template<class T>
+zenith::render::Damage SwapChain<T>::damage_since(uint64_t generation, uint64_t after, uint64_t through) {
+	std::scoped_lock lock(mutex);
+	return damage_history.since(generation, after, through);
 }
 
 template<class T>
@@ -212,9 +220,10 @@ void SwapChain<T>::end_write(array_view<FlutterRect> damage, int ready_fence_fd)
 		}
 		return;
 	}
-	write_buffer->damage_regions = std::vector(damage.begin(), damage.end());
+
 	write_buffer->set_ready_fence_fd(ready_fence_fd);
 	const uint64_t serial = next_frame_serial.fetch_add(1, std::memory_order_relaxed);
+	damage_history.publish(serial, damage_history.normalize(damage));
 	write_buffer->frame_serial.store(serial, std::memory_order_release);
 	latest_buffer = write_buffer;
 	write_in_progress = false;

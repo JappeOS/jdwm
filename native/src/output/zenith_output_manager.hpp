@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <vector>
+#include <tuple>
 #include "multimonitor/multi_monitor_mode.hpp"
 #include "swap_chain.hpp"
 #include "third_party/embedder.h"
@@ -35,25 +36,39 @@ public:
 	float pointer_scale_at(double x, double y) const;
 	void schedule_cursor_frame(double x, double y) const;
 	void schedule_compositor_frame() const;
-	void schedule_compositor_frame(const std::vector<FlutterRect>& frame_damage) const;
 	void set_display_enabled(bool enable) const;
 	void refresh_xwayland_workareas() const;
 	void update_active_output_from_cursor(double x, double y) const;
 
-	SwapChain<wlr_gles2_buffer>* composition_source_swap_chain() const;
+	std::shared_ptr<SwapChain<wlr_gles2_buffer>> composition_source_swap_chain() const;
+	// Wayland thread publishes; raster thread only loads an owned snapshot.
+	void publish_composition_target() const;
 	int composition_source_width() const;
 	int composition_source_height() const;
 	ZenithOutput* current_render_output() const;
 	ZenithOutput* vsync_driver_output() const;
 
 private:
+	struct OutputMapping {
+		int x, y, width, height;
+		float scale;
+		int transform;
+		bool enabled;
+		bool operator==(const OutputMapping& other) const {
+			return std::tie(x, y, width, height, scale, transform, enabled) ==
+			       std::tie(other.x, other.y, other.width, other.height, other.scale, other.transform, other.enabled);
+		}
+	};
+
+	mutable std::shared_ptr<SwapChain<wlr_gles2_buffer>> published_target_;
 	ZenithServer* server_ = nullptr;
 	multimonitor::MultiMonitorMode mode_ = multimonitor::MultiMonitorMode::Off;
 	VsyncDriverMode vsync_mode_ = VsyncDriverMode::RenderOutput;
 	mutable ZenithOutput* active_output_ = nullptr;
 	mutable ZenithOutput* last_cursor_output_ = nullptr;
 	mutable ZenithOutput* extend_composition_format_output_ = nullptr;
-	mutable std::unique_ptr<SwapChain<wlr_gles2_buffer>> extend_composition_swap_chain_ = nullptr;
+	mutable std::shared_ptr<SwapChain<wlr_gles2_buffer>> extend_composition_swap_chain_ = nullptr;
+	mutable std::vector<OutputMapping> composition_mapping_;
 	mutable int extend_composition_width_ = 0;
 	mutable int extend_composition_height_ = 0;
 

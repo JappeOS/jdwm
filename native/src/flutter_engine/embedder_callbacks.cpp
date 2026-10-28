@@ -27,7 +27,7 @@ extern "C" {
 #include <unistd.h>
 #include <vector>
 
-static SwapChain<wlr_gles2_buffer>* current_composition_swap_chain(ZenithServer* server) {
+static std::shared_ptr<SwapChain<wlr_gles2_buffer>> current_composition_swap_chain(ZenithServer* server) {
 	return server != nullptr && server->output_manager != nullptr
 		       ? server->output_manager->composition_source_swap_chain()
 		       : nullptr;
@@ -91,19 +91,22 @@ static thread_local uint64_t flutter_frame_started_ns = 0;
 
 uint32_t flutter_fbo_callback(void* userdata) {
 	flutter_frame_started_ns = zenith::render::frame_trace_now();
-	GLuint fbo = attach_framebuffer();
+	GLuint fbo = attach_framebuffer(static_cast<EmbedderState*>(userdata));
 	zenith::egl::set_flutter_frame_rendering_active(
 		zenith::egl::gl_context_serialization_enabled() && fbo != 0
 	);
 	return fbo;
 }
 
-GLuint attach_framebuffer() {
+GLuint attach_framebuffer(EmbedderState* state) {
 	ZenithServer* server = ZenithServer::instance();
-	SwapChain<wlr_gles2_buffer>* swap_chain = current_composition_swap_chain(server);
+	auto swap_chain = current_composition_swap_chain(server);
 	if (swap_chain == nullptr) {
+		state->raster_target.reset();
+		state->raster_fbo = 0;
 		return 0;
 	}
+
 	// Only the raster thread may wait for a free, GPU-completed target. The
 	// Wayland thread remains available for input, frame selection and flips.
 	const uint64_t acquire_started = zenith::render::frame_trace_now();
@@ -112,9 +115,14 @@ GLuint attach_framebuffer() {
 		zenith::render::frame_trace_now() - acquire_started);
 	zenith::render::trace_frame_sample("write-slot", "flutter", 0, gles2_buffer == nullptr);
 	if (gles2_buffer == nullptr) {
+		state->raster_target.reset();
+		state->raster_fbo = 0;
 		return 0;
 	}
-	return gles2_buffer->fbo;
+
+	state->raster_target = std::move(swap_chain);
+	state->raster_fbo = gles2_buffer->fbo;
+	return state->raster_fbo;
 }
 
 bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
@@ -127,7 +135,14 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 		flutter_frame_started_ns = 0;
 	}
 	zenith::render::FrameTimingScope present_timer("flutter-present", "flutter");
-	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage, present_info->frame_damage.num_rects);
+	auto* state = static_cast<EmbedderState*>(userdata);
+	if (!state->raster_target || state->raster_fbo != present_info->fbo_id) {
+		wlr_log(WLR_ERROR, "zenith: refusing publication from an unknown composition FBO");
+		zenith::egl::set_flutter_frame_rendering_active(false);
+		return false;
+	}
+	array_view<FlutterRect> frame_damage(present_info->frame_damage.damage,
+		present_info->frame_damage.damage ? present_info->frame_damage.num_rects : 0);
 	int ready_fence_fd = create_frame_ready_fence_fd();
 	if (ready_fence_fd == -1) {
 		static bool logged_sync_fallback = false;
@@ -138,26 +153,36 @@ bool flutter_present(void* userdata, const FlutterPresentInfo* present_info) {
 		glFinish();
 	}
 
-	bool success = commit_framebuffer(frame_damage, ready_fence_fd);
+	bool success = commit_framebuffer(state, frame_damage, ready_fence_fd);
 	zenith::egl::set_flutter_frame_rendering_active(false);
 	return success;
 }
 
-bool commit_framebuffer(array_view<FlutterRect> damage, int ready_fence_fd) {
+bool commit_framebuffer(EmbedderState* state, array_view<FlutterRect> damage, int ready_fence_fd) {
 	ZenithServer* server = ZenithServer::instance();
-	SwapChain<wlr_gles2_buffer>* swap_chain = current_composition_swap_chain(server);
+	auto swap_chain = std::move(state->raster_target);
+	state->raster_fbo = 0;
 	if (swap_chain == nullptr) {
 		if (ready_fence_fd != -1) {
 			close(ready_fence_fd);
 		}
 		return false;
 	}
+
 	swap_chain->end_write(damage, ready_fence_fd);
+	
 	// Ensure freshly rendered frames are presented even if no input event
 	// (like pointer motion) occurs to trigger a frame.
-	std::vector<FlutterRect> frame_damage(damage.begin(), damage.end());
-	server->callable_queue.enqueue([server, frame_damage = std::move(frame_damage)]() {
-		server->output_manager->schedule_compositor_frame(frame_damage);
+	const auto frame_damage = swap_chain->damage_history.normalize(damage);
+	zenith::render::trace_damage("frame", "flutter", frame_damage);
+	server->callable_queue.enqueue([server, swap_chain]() {
+		if (server->output_manager != nullptr &&
+		    server->output_manager->composition_source_swap_chain() == swap_chain) {
+			// Select completed content independently on each output. Even an
+			// unchanged output may owe client frame callbacks; skip GPU commits
+			// there only after checking its accumulated damage.
+			server->output_manager->schedule_compositor_frame();
+		}
 	});
 	return true;
 }
@@ -239,10 +264,8 @@ bool flutter_make_resource_current(void* userdata) {
  */
 FlutterTransformation flutter_surface_transformation(void* data) {
 	auto* server = ZenithServer::instance();
-	double height =
-		server != nullptr
-			? server->composition_source_height_cache.load(std::memory_order_acquire)
-			: 0;
+	const double height = server
+		? server->composition_source_height_cache.load(std::memory_order_acquire) : 0;
 
 	return FlutterTransformation{
 		  1.0, 0.0, 0.0, 0.0, -1.0, height, 0.0, 0.0, 1.0,
@@ -250,26 +273,19 @@ FlutterTransformation flutter_surface_transformation(void* data) {
 }
 
 void flutter_populate_existing_damage(void* user_data, intptr_t fbo_id, FlutterDamage* existing_damage) {
-	ZenithServer* server = ZenithServer::instance();
-	SwapChain<wlr_gles2_buffer>* swap_chain = current_composition_swap_chain(server);
-	array_view<FlutterRect> damage_regions =
-		(swap_chain != nullptr)
-			? swap_chain->get_damage_regions()
-			: array_view<FlutterRect>(nullptr, 0);
-
-	// TODO: Who should free this object? Me or Flutter?
-	// Also, I think Flutter's partial repaint mechanism is not completely implemented.
-	// It only works with one rectangle. If I give it more than one, it just ignores them.
-	// For this reason we just combine all damage regions into one rectangle.
-	auto* union_region = new FlutterRect{};
-	if (damage_regions.size() > 0) {
-		*union_region = damage_regions[0];
-		for (size_t i = 1; i < damage_regions.size(); i++) {
-			*union_region = rect_union(*union_region, damage_regions[i]);
-		}
+	auto* state = static_cast<EmbedderState*>(user_data);
+	auto target = state->raster_target;
+	zenith::render::Damage damage;
+	if (target) {
+		damage = state->raster_fbo == fbo_id
+			? target->repair_damage()
+			: target->damage_history.full(zenith::render::DamageReason::Invalid);
+	} else {
+		// No FBO exists: zero rectangles tells Flutter to force a full repaint.
+		*existing_damage = {sizeof(FlutterDamage), 0, nullptr};
+		return;
 	}
-
-	existing_damage->struct_size = sizeof(FlutterDamage);
-	existing_damage->num_rects = 1;
-	existing_damage->damage = union_region;
+	zenith::render::trace_damage("repair", "flutter", damage);
+	state->existing_damage_rect = damage.rect;
+	*existing_damage = {sizeof(FlutterDamage), 1, &state->existing_damage_rect};
 }

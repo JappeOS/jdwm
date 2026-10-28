@@ -6,6 +6,7 @@ class WindowResizeGestureDetector extends StatelessWidget {
   final Map<Alignment, GestureDragUpdateCallback> listeners;
   final void Function(SystemMouseCursor, DragUpdateDetails) dragWithCursor;
   final GestureDragEndCallback onPanEnd;
+  final GestureDragStartCallback? onPanStart;
 
   const WindowResizeGestureDetector({
     super.key,
@@ -13,6 +14,7 @@ class WindowResizeGestureDetector extends StatelessWidget {
     required this.listeners,
     required this.dragWithCursor,
     required this.onPanEnd,
+    this.onPanStart,
   });
 
   @override
@@ -116,7 +118,9 @@ class WindowResizeGestureDetector extends StatelessWidget {
           dragWithCursor(cursor, details);
           onPanUpdate(details);
         },
+        onPanStart: onPanStart,
         onPanEnd: onPanEnd,
+        onPanCancel: () => onPanEnd(DragEndDetails()),
       ),
     );
   }

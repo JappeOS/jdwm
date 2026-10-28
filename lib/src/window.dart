@@ -183,6 +183,7 @@ class _WindowState extends State<Window> {
           _backendInteractiveMoveActive = false;
           return;
         }
+        WindowManager.of(context)?.requestFocus(widget.entry);
         _backendInteractiveMoveActive = true;
         _backendInteractiveResizeActiveEdge = null;
         widget.entry.backendInteractiveResizeEdge = null;
@@ -556,8 +557,7 @@ class _WindowState extends State<Window> {
           },
           child: _buildContainer(
             hasBorder: !docked,
-            isFocused: hierarchy.entriesByFocus.isNotEmpty &&
-                hierarchy.entriesByFocus.last == entry,
+            isFocused: hierarchy.focusedEntry == entry,
             child: Column(
               children: [
                 Visibility(
@@ -604,6 +604,13 @@ class _WindowState extends State<Window> {
             borderThickness: _resizingSpacing,
             listeners: _resizeListeners,
             dragWithCursor: _onResizePanWithCursor,
+            onPanStart: (_) {
+              if (manager != null) {
+                manager.requestFocus(entry);
+              } else {
+                hierarchy.requestWindowFocus(entry);
+              }
+            },
             onPanEnd: (details) {
               if (isBackendWindow) {
                 _interactiveResizeRequestedForEdge = null;
@@ -770,8 +777,6 @@ class _WindowState extends State<Window> {
 
   void _applyWindowDrag(Offset delta, Offset globalPosition) {
     final entry = widget.entry;
-    final hierarchy =
-        provider_pkg.Provider.of<WindowHierarchyState>(context, listen: false);
     final manager = WindowManager.of(context);
     final docked = entry.maximized || entry.windowDock != WindowDock.normal;
     final restoreRect = entry.restoreRectAfterMaximize;
@@ -823,11 +828,6 @@ class _WindowState extends State<Window> {
       );
     }
 
-    if (manager != null) {
-      manager.requestFocus(entry);
-    } else {
-      hierarchy.requestWindowFocus(entry);
-    }
     if (entry.maximized) {
       _requestBackendMaximize(context, false);
     }
@@ -842,7 +842,6 @@ class _WindowState extends State<Window> {
     if (entry.backendViewId != null) {
       manager?.syncBackendWindowGeometry(entry, force: true);
     }
-    setState(() {});
   }
 
   void _onTitlebarDragEnd(DragEndDetails details) {
@@ -970,14 +969,6 @@ class _WindowState extends State<Window> {
     bool right = false,
     bool bottom = false,
   }) {
-    final manager = WindowManager.of(context);
-    if (manager != null) {
-      manager.requestFocus(widget.entry);
-    } else {
-      provider_pkg.Provider.of<WindowHierarchyState>(context, listen: false)
-          .requestWindowFocus(widget.entry);
-    }
-
     final edge = _edgeFromSides(
       left: left,
       top: top,
@@ -1023,8 +1014,6 @@ class _WindowState extends State<Window> {
       clampedBottom,
     );
     _notifyBackendResize(context);
-
-    setState(() {});
   }
 
   ResizeEdge? _edgeFromSides({
