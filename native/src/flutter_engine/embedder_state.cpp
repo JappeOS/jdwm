@@ -162,7 +162,7 @@ void EmbedderState::configure_and_run_engine() {
 	// Buffer repair history is tracked for every composition target, including
 	// the shared virtual desktop. An empty repair is an explicit empty rect.
 	config.open_gl.populate_existing_damage = flutter_populate_existing_damage;
-	wlr_log(WLR_INFO, "zenith: damage tracking enabled history=%zu force_full_repaint=%d",
+	wlr_log(WLR_INFO, "zenith: damage tracking enabled history=%zu force_full_repaint=%d buffer_repair=full_nonempty",
 		zenith::render::DamageHistory::capacity, zenith::render::force_full_repaint());
 
 	FlutterTaskRunnerDescription platform_task_runner_description{};

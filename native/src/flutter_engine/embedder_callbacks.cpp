@@ -5,6 +5,7 @@
 #include "rect.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "output/frame_timing_trace.hpp"
+#include "output/flutter_damage_policy.hpp"
 #include "util/egl/egl_extensions.hpp"
 #include "util/egl/gl_context_lock.hpp"
 
@@ -278,7 +279,7 @@ void flutter_populate_existing_damage(void* user_data, intptr_t fbo_id, FlutterD
 	zenith::render::Damage damage;
 	if (target) {
 		damage = state->raster_fbo == fbo_id
-			? target->repair_damage()
+			? zenith::render::flutter_buffer_repair(target->damage_history, target->repair_damage())
 			: target->damage_history.full(zenith::render::DamageReason::Invalid);
 	} else {
 		// No FBO exists: zero rectangles tells Flutter to force a full repaint.

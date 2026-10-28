@@ -11,7 +11,7 @@
 
 namespace zenith::render {
 
-enum class DamageReason { None, Missing, Invalid, FirstUse, HistoryLost, Generation, Forced };
+enum class DamageReason { None, Missing, Invalid, FirstUse, HistoryLost, Generation, Forced, Readback };
 
 // Coordinates are composition pixels, with a top-left origin. Empty and
 // unknown are deliberately different: unknown always requires full repair.
