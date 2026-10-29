@@ -116,7 +116,7 @@ void EmbedderState::run_engine() {
 	if (!event_loop)
 		throw std::runtime_error("could not create Flutter event loop");
 
-		queue_source = wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE,
+	queue_source = wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE,
 		[](int, uint32_t, void* data) {
 			static_cast<CallableQueue*>(data)->execute();
 			return 0;
