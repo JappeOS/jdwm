@@ -153,9 +153,10 @@ std::shared_ptr<Slot<T>> SwapChain<T>::choose_write_buffer_locked() const {
 }
 
 template<class T>
-T* SwapChain<T>::start_write() {
+T* SwapChain<T>::start_write(const StopSignal* stop) {
 	std::unique_lock lock(mutex);
 	for (;;) {
+		if (stop && stop->requested()) return nullptr;
 		write_buffer = choose_write_buffer_locked();
 		write_in_progress = write_buffer != nullptr;
 		if (write_buffer != nullptr) return write_buffer->buffer.get();
@@ -179,11 +180,11 @@ T* SwapChain<T>::start_write() {
 			return nullptr;
 		}
 		lock.unlock();
-		pollfd pfd{fd, POLLIN, 0};
+		pollfd fds[] = {{fd, POLLIN, 0}, {stop ? stop->fd() : -1, POLLIN, 0}};
 		int result;
-		do { result = poll(&pfd, 1, -1); } while (result < 0 && errno == EINTR);
+		do { result = poll(fds, 2, -1); } while (result < 0 && errno == EINTR);
 		close(fd);
-		if (result < 0 || !(pfd.revents & POLLIN)) return nullptr;
+		if (result < 0 || fds[1].revents || !(fds[0].revents & POLLIN)) return nullptr;
 		lock.lock();
 		// Re-evaluate both leases and the newest completed frame after waking.
 	}

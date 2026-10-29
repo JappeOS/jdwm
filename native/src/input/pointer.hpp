@@ -16,6 +16,7 @@ struct ZenithServer;
 
 struct ZenithPointer {
 	explicit ZenithPointer(ZenithServer* server);
+	~ZenithPointer();
 
 	ZenithServer* server;
 	wlr_cursor* cursor;

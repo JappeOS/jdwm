@@ -45,6 +45,14 @@ public:
 	}
 
 	void erase(int64_t id) { remove(id, false); }
+	
+	void clear() {
+		decltype(frames_) retired;
+		{
+			std::scoped_lock lock(mutex_);
+			retired.swap(frames_);
+		}
+	}
 
 	// Retain displayed surfaces for Flutter closing animations. Cursor surfaces
 	// and other surfaces Flutter never sampled must not stay in the registry.

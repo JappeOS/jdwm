@@ -369,6 +369,7 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 	if (output == nullptr) {
 		return;
 	}
+
 	if (active_output_ == nullptr) {
 		active_output_ = output.get();
 	}
@@ -403,6 +404,7 @@ void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput
 			wlr_output_layout_remove(server_->output_layout, previous->wlr_output);
 		}
 	}
+	
 	add_output_to_layout(server_, output.get());
 	server_->output = output;
 	send_single_output_metrics(server_, output.get());
@@ -421,6 +423,16 @@ void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) co
 	if (removed_output == nullptr) {
 		return;
 	}
+
+	if (server_->is_shutting_down()) {
+		wlr_output_layout_remove(server_->output_layout, removed_output->wlr_output);
+		if (server_->output.get() == removed_output)
+			server_->output.reset();
+		server_->outputs.erase(std::remove_if(server_->outputs.begin(), server_->outputs.end(),
+			[removed_output](const auto& output) { return output.get() == removed_output; }), server_->outputs.end());
+		return;
+	}
+
 	wlr_output_layout_remove(server_->output_layout, removed_output->wlr_output);
 
 	auto it = std::remove_if(server_->outputs.begin(), server_->outputs.end(),
@@ -668,9 +680,13 @@ void ZenithOutputManager::update_active_output_from_cursor(double x, double y) c
 }
 
 void ZenithOutputManager::schedule_output_frame(ZenithOutput* output, bool force_immediate) const {
+	if (server_->is_shutting_down())
+		return;
+
 	if (output == nullptr || output->wlr_output == nullptr || !output->wlr_output->enabled) {
 		return;
 	}
+
 	if (force_immediate || mode_ != multimonitor::MultiMonitorMode::Extend) {
 		wlr_output_schedule_frame(output->wlr_output);
 		return;

@@ -12,6 +12,7 @@ class KeyRepeater {
 	KeyboardKeyEventMessage repeated_event{};
 	int32_t delay{};
 	int32_t rate{};
+	uint64_t generation = 0;
 
 	wl_event_source* timer = nullptr;
 

@@ -157,7 +157,7 @@ bool handle_shortcuts(struct ZenithKeyboard* keyboard, uint32_t modifiers, xkb_k
 	// Alt + Esc OR Alt + F4
 	if (is_modifier_pressed(WLR_MODIFIER_ALT) &&
 	    (is_key_pressed(XKB_KEY_Escape) || is_key_pressed(XKB_KEY_F4))) {
-		wl_display_terminate(keyboard->server->display);
+		keyboard->server->request_shutdown();
 		return true;
 	}
 
@@ -165,7 +165,7 @@ bool handle_shortcuts(struct ZenithKeyboard* keyboard, uint32_t modifiers, xkb_k
 	if (is_modifier_pressed(WLR_MODIFIER_CTRL) &&
 	    is_modifier_pressed(WLR_MODIFIER_ALT) &&
 	    is_key_pressed(XKB_KEY_BackSpace)) {
-		wl_display_terminate(keyboard->server->display);
+		keyboard->server->request_shutdown();
 		return true;
 	}
 

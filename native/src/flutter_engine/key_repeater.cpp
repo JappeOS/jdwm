@@ -1,43 +1,45 @@
 #include "server.hpp"
 #include "key_repeater.hpp"
+#include <algorithm>
 
-void KeyRepeater::schedule_repeat(KeyboardKeyEventMessage repeated_event) {
+void KeyRepeater::schedule_repeat(KeyboardKeyEventMessage event) {
 	cancel_repeat();
-
 	auto* server = ZenithServer::instance();
+	const auto request = generation;
+	// Never block the platform thread waiting for Wayland (especially on exit).
+	server->callable_queue.enqueue([this, server, request, event] {
+		auto* keyboard = server->seat->keyboard_state.keyboard;
+		if (!keyboard || server->is_shutting_down())
+			return;
 
-	channel<int32_t> delay_chan = {};
-	channel<int32_t> rate_chan = {};
-	server->callable_queue.enqueue([server, &delay_chan, &rate_chan] {
-		wlr_keyboard* keyboard = server->seat->keyboard_state.keyboard;
-		if (keyboard != nullptr) {
-			delay_chan.write(keyboard->repeat_info.delay);
-			rate_chan.write(keyboard->repeat_info.rate);
-		}
-	});
-	delay = delay_chan.read();
-	rate = rate_chan.read();
+		const auto repeat = keyboard->repeat_info;
+		server->embedder_state->callable_queue.enqueue([this, server, request, event, repeat] {
+			if (request != generation || repeat.rate <= 0)
+				return;
 
-	server->embedder_state->callable_queue.enqueue([this, server, repeated_event] {
-		this->repeated_event = repeated_event;
-		this->repeated_event.state = KeyboardKeyState::repeat;
+			delay = repeat.delay;
+			rate = std::max(1, 1000 / repeat.rate); // Wayland rate is keys/second.
+			repeated_event = event;
+			repeated_event.state = KeyboardKeyState::repeat;
 
-		timer = wl_event_loop_add_timer(server->embedder_state->event_loop, [](void* data) -> int {
-			auto* key_repeater = static_cast<KeyRepeater*>(data);
-			ZenithServer::instance()->embedder_state->send_key_event(key_repeater->repeated_event);
-			wl_event_source_timer_update(key_repeater->timer, key_repeater->rate);
-			return 0;
-		}, this);
-		wl_event_source_timer_update(timer, delay);
+			timer = wl_event_loop_add_timer(server->embedder_state->event_loop, [](void* data) -> int {
+				auto* self = static_cast<KeyRepeater*>(data);
+				ZenithServer::instance()->embedder_state->send_key_event(self->repeated_event);
+				wl_event_source_timer_update(self->timer, self->rate);
+				return 0;
+			}, this);
+
+			if (timer)
+				wl_event_source_timer_update(timer, std::max(1, delay));
+		});
 	});
 }
 
+// Both repeat requests and cancellation run on Flutter's platform thread.
 void KeyRepeater::cancel_repeat() {
-	auto* server = ZenithServer::instance();
-	server->embedder_state->callable_queue.enqueue([this] {
-		if (timer != nullptr) {
-			wl_event_source_remove(timer);
-			timer = nullptr;
-		}
-	});
+	++generation;
+	if (timer) {
+		wl_event_source_remove(timer);
+		timer = nullptr;
+	}
 }

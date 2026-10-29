@@ -21,6 +21,25 @@ ZenithTouchDevice::ZenithTouchDevice(ZenithServer* server, wlr_input_device* wlr
 
 	touch_cancel.notify = touch_cancel_handle;
 	wl_signal_add(&wlr_touch_from_input_device(wlr_device)->events.cancel, &touch_cancel);
+	
+	destroy.notify = [](wl_listener* listener, void*) {
+		ZenithTouchDevice* device = wl_container_of(listener, device, destroy);
+		auto* server = device->server;
+		server->touch_devices.remove_if([device](const auto& item) { return item.get() == device; });
+		uint32_t caps = (server->pointer ? WL_SEAT_CAPABILITY_POINTER : 0) |
+			(!server->keyboards.empty() ? WL_SEAT_CAPABILITY_KEYBOARD : 0) |
+			(!server->touch_devices.empty() ? WL_SEAT_CAPABILITY_TOUCH : 0);
+		wlr_seat_set_capabilities(server->seat, caps);
+	};
+	wl_signal_add(&wlr_device->events.destroy, &destroy);
+}
+
+ZenithTouchDevice::~ZenithTouchDevice() {
+	wl_list_remove(&touch_down.link);
+	wl_list_remove(&touch_motion.link);
+	wl_list_remove(&touch_up.link);
+	wl_list_remove(&touch_cancel.link);
+	wl_list_remove(&destroy.link);
 }
 
 void touch_down_handle(wl_listener* listener, void* data) {

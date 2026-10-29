@@ -120,5 +120,8 @@ struct wlr_egl* create_shared_egl_context(struct wlr_egl* egl) {
 		return nullptr;
 	}
 
-	return wlr_egl_create_with_context(display, shared_egl_context);
+	auto* shared = wlr_egl_create_with_context(display, shared_egl_context);
+	if (!shared)
+		eglDestroyContext(display, shared_egl_context);
+	return shared;
 }

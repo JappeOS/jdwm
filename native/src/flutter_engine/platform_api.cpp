@@ -107,8 +107,16 @@ void startup_complete(ZenithServer* server, const flutter::MethodCall<>& call,
                       std::unique_ptr<flutter::MethodResult<>>&& result) {
 
 	server->callable_queue.enqueue([server] {
+		if (server->is_shutting_down())
+			return;
 		if (!server->startup_command.empty()) {
 			if (fork() == 0) {
+				// Children must not inherit the event loop's blocked exit signals.
+				sigset_t signals;
+				sigemptyset(&signals);
+				sigaddset(&signals, SIGINT);
+				sigaddset(&signals, SIGTERM);
+				sigprocmask(SIG_UNBLOCK, &signals, nullptr);
 				execl("/bin/sh", "/bin/sh", "-c", server->startup_command.c_str(), nullptr);
 				wlr_log(WLR_ERROR, "Failed to launch startup command '%s': %s",
 				        server->startup_command.c_str(), strerror(errno));

@@ -17,6 +17,8 @@
 #include <cstring>
 #include <set>
 #include <string>
+#include <csignal>
+#include <stdexcept>
 
 extern "C" {
 #include <GLES2/gl2.h>
@@ -44,7 +46,10 @@ ZenithServer* ZenithServer::_instance = nullptr;
 
 ZenithServer* ZenithServer::instance() {
 	if (_instance == nullptr) {
-		_instance = new ZenithServer();
+		auto server = std::unique_ptr<ZenithServer>(new ZenithServer());
+		_instance = server.get();
+		server->initialize(); // On failure the owner performs partial cleanup.
+		server.release();
 	}
 	return _instance;
 }
@@ -332,8 +337,9 @@ static void zenith_debug_log_loaded_libs() {
 	}
 }
 
-ZenithServer::ZenithServer() {
-	main_thread_id = std::this_thread::get_id();
+ZenithServer::ZenithServer() : main_thread_id(std::this_thread::get_id()) {}
+
+void ZenithServer::initialize() {
 	wlr_log(WLR_INFO, "zenith: build version=%s commit=%s built=%s",
 	        zenith_build_version(), zenith_build_git_commit(), zenith_build_timestamp());
 
@@ -347,7 +353,27 @@ ZenithServer::ZenithServer() {
 	display = wl_display_create();
 	if (display == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create Wayland display");
-		exit(1);
+		throw std::runtime_error("compositor initialization failed");
+	}
+
+	// Register before backend/Flutter worker creation so they inherit the
+	// blocked signals. Wayland dispatches these callbacks on the owning thread.
+	if (pthread_sigmask(SIG_SETMASK, nullptr, &previous_signal_mask) != 0)
+		throw std::runtime_error("could not read signal mask");
+
+	signal_mask_saved = true;
+	auto terminate = [](int signal, void* data) -> int {
+		auto* server = static_cast<ZenithServer*>(data);
+		wlr_log(WLR_INFO, "zenith: received signal %d, shutting down", signal);
+		server->request_shutdown();
+		return 0;
+	};
+
+	sigint_source = wl_event_loop_add_signal(wl_display_get_event_loop(display), SIGINT, terminate, this);
+	sigterm_source = wl_event_loop_add_signal(wl_display_get_event_loop(display), SIGTERM, terminate, this);
+	if (!sigint_source || !sigterm_source) {
+		wlr_log(WLR_ERROR, "Could not install termination signal handlers");
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	const bool user_specified_libseat_backend = std::getenv("LIBSEAT_BACKEND") != nullptr;
@@ -375,7 +401,7 @@ ZenithServer::ZenithServer() {
 	}
 	if (backend == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots backend");
-		exit(2);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	zenith_debug_log_loaded_libs();
@@ -384,7 +410,7 @@ ZenithServer::ZenithServer() {
 		wlr_log(WLR_ERROR,
 		        "Could not create wlroots renderer (EGL/GLES2 init failed). "
 		        "Check your EGL/GBM/Mesa setup, or build wlroots with a software renderer fallback.");
-		exit(3);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	if (!wlr_renderer_is_gles2(renderer)) {
 		wlr_log(
@@ -393,11 +419,11 @@ ZenithServer::ZenithServer() {
 			"but wlroots selected a non-GLES renderer. "
 			"Check EGL/GBM/Mesa setup and WLR_RENDERER_ALLOW_SOFTWARE."
 		);
-		exit(3);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	if (!wlr_renderer_init_wl_display(renderer, display)) {
 		wlr_log(WLR_ERROR, "Could not initialize wlroots renderer");
-		exit(3);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	zenith_configure_gl_context_serialization(renderer);
 
@@ -409,22 +435,22 @@ ZenithServer::ZenithServer() {
 	allocator = wlr_allocator_autocreate(backend, renderer);
 	if (allocator == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots allocator");
-		exit(12);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	compositor = wlr_compositor_create(display, 6, renderer);
 	if (compositor == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots compositor");
-		exit(4);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	if (wlr_subcompositor_create(display) == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots subcompositor");
-		exit(4);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	viewporter = wlr_viewporter_create(display);
 	if (viewporter == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots viewporter");
-		exit(4);
+		throw std::runtime_error("compositor initialization failed");
 	}
 //	surface_destroyed.notify = server_surface_destroyed;
 //	new_surface.notify = server_new_surface;
@@ -432,31 +458,31 @@ ZenithServer::ZenithServer() {
 
 	if (wlr_data_device_manager_create(display) == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots data device manager");
-		exit(5);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	output_layout = wlr_output_layout_create(display);
 	if (output_layout == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots output layout");
-		exit(6);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	scene = wlr_scene_create();
 	if (scene == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots scene");
-		exit(6);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	scene_output_layout = wlr_scene_attach_output_layout(scene, output_layout);
 	if (scene_output_layout == nullptr) {
 		wlr_log(WLR_ERROR, "Could not attach scene to output layout");
-		exit(6);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	xdg_shell = wlr_xdg_shell_create(display, 6);
 	if (xdg_shell == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots XDG shell");
-		exit(7);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	/*
@@ -467,44 +493,44 @@ ZenithServer::ZenithServer() {
 	seat = wlr_seat_create(display, "seat0");
 	if (seat == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots seat");
-		exit(8);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	xwayland = wlr_xwayland_create(display, compositor, false);
 	if (xwayland == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots Xwayland");
-		exit(8);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	wlr_xwayland_set_seat(xwayland, seat);
 
 	text_input_manager = wlr_text_input_manager_v3_create(display);
 	if (text_input_manager == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create text input manager");
-		exit(-1);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	decoration_manager = wlr_xdg_decoration_manager_v1_create(display);
 	if (decoration_manager == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create text input manager");
-		exit(-1);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	data_device_manager = wlr_data_device_manager_create(display);
 	if (data_device_manager == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create text input manager");
-		exit(-1);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	relative_pointer_manager = wlr_relative_pointer_manager_v1_create(display);
 	if (relative_pointer_manager == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create relative pointer manager");
-		exit(-1);
+		throw std::runtime_error("compositor initialization failed");
 	}
 
 	pointer_constraints = wlr_pointer_constraints_v1_create(display);
 	if (pointer_constraints == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create pointer constraints manager");
-		exit(-1);
+		throw std::runtime_error("compositor initialization failed");
 	}
 	active_pointer_constraint_destroy.notify = server_active_pointer_constraint_destroy;
 	wl_list_init(&active_pointer_constraint_destroy.link);
@@ -552,13 +578,14 @@ ZenithServer::ZenithServer() {
 	};
 
 	auto* event_loop = wl_display_get_event_loop(display);
-	wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE, callable_queue_function, nullptr);
+	queue_source = wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE, callable_queue_function, nullptr);
+	if (!queue_source) throw std::runtime_error("could not attach native callback queue");
 
 	load_egl_extensions();
 	// TODO: Implement drag and drop.
 }
 
-void ZenithServer::run(const char* startup_command) {
+int ZenithServer::run(const char* startup_command) {
 	this->startup_command = startup_command;
 
 	{
@@ -571,8 +598,9 @@ void ZenithServer::run(const char* startup_command) {
 	const char* socket = wl_display_add_socket_auto(display);
 	if (!socket) {
 		wlr_log(WLR_ERROR, "Could not create a Wayland socket");
-		wlr_backend_destroy(backend);
-		exit(9);
+		request_shutdown(9);
+		shutdown();
+		return exit_status;
 	}
 
 	// Make sure the X11 session from the host is not visible because some programs prefer talking
@@ -585,21 +613,29 @@ void ZenithServer::run(const char* startup_command) {
 	wlr_egl* main_egl = wlr_gles2_renderer_get_egl(renderer);
 
 	// Create 2 OpenGL shared contexts for rendering operations.
-	wlr_egl* flutter_gl_context = create_shared_egl_context(main_egl);
-	wlr_egl* flutter_resource_gl_context = create_shared_egl_context(main_egl);
+	auto flutter_gl_context = std::unique_ptr<wlr_egl, decltype(&wlr_egl_destroy)>(
+		create_shared_egl_context(main_egl), wlr_egl_destroy);
+	auto flutter_resource_gl_context = std::unique_ptr<wlr_egl, decltype(&wlr_egl_destroy)>(
+		create_shared_egl_context(main_egl), wlr_egl_destroy);
 	if (flutter_gl_context == nullptr || flutter_resource_gl_context == nullptr) {
 		wlr_log(
 			WLR_ERROR,
 			"zenith: failed to create Flutter EGL contexts; cannot start Flutter renderer"
 		);
-		exit(11);
+		flutter_resource_gl_context.reset();
+		flutter_gl_context.reset();
+		request_shutdown(11);
+		shutdown();
+		return exit_status;
 	}
 
 	if (!wlr_backend_start(backend)) {
 		wlr_log(WLR_ERROR, "Could not start backend");
-		wlr_backend_destroy(backend);
-		wl_display_destroy(display);
-		exit(10);
+		flutter_resource_gl_context.reset();
+		flutter_gl_context.reset();
+		request_shutdown(10);
+		shutdown();
+		return exit_status;
 	}
 
 	// Start wlroots outputs before Flutter's render thread. This avoids a
@@ -607,7 +643,9 @@ void ZenithServer::run(const char* startup_command) {
 	// context current while the main thread still has to create output
 	// swapchains. Keep embedder_state null during backend start so output
 	// discovery doesn't enqueue Flutter calls before FlutterEngineRun().
-	embedder_state = std::make_unique<EmbedderState>(flutter_gl_context, flutter_resource_gl_context);
+	embedder_state = std::make_unique<EmbedderState>(flutter_gl_context.get(), flutter_resource_gl_context.get());
+	flutter_gl_context.release();
+	flutter_resource_gl_context.release();
 	embedder_state->run_engine();
 	if (output_manager != nullptr) {
 		if (output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
@@ -629,25 +667,102 @@ void ZenithServer::run(const char* startup_command) {
 	wlr_log(WLR_INFO, "Running Wayland compositor on WAYLAND_DISPLAY=%s", socket);
 
 	wl_display_run(display);
+	shutdown();
+	return exit_status;
+}
+
+void ZenithServer::request_shutdown(int status) {
+	if (status != 0)
+		exit_status = status;
+	if (!shutting_down.exchange(true, std::memory_order_acq_rel) && display)
+		wl_display_terminate(display);
+}
+
+ZenithServer::~ZenithServer() {
+	shutdown();
+	_instance = nullptr;
+}
+
+void ZenithServer::shutdown() {
+	if (cleanup_started)
+		return;
+	cleanup_started = true;
+	shutting_down.store(true, std::memory_order_release);
+	wlr_log(WLR_INFO, "zenith: stopping Flutter");
+	if (embedder_state) embedder_state->stop_engine();
+	while (callable_queue.execute()) {}
+	wlr_log(WLR_INFO, "zenith: releasing clients and rendering resources");
 
 	// wlroots asserts protocol event listener lists are empty on teardown.
-	wl_list_remove(&new_output.link);
-	wl_list_remove(&new_surface.link);
-	wl_list_remove(&new_xdg_toplevel.link);
-	wl_list_remove(&new_xdg_popup.link);
-	wl_list_remove(&xwayland_ready.link);
-	wl_list_remove(&new_xwayland_surface.link);
-	wl_list_remove(&new_input.link);
-	wl_list_remove(&request_cursor.link);
-	wl_list_remove(&new_text_input.link);
-	wl_list_remove(&new_toplevel_decoration.link);
-	wl_list_remove(&request_set_selection.link);
+	if (new_output.link.next) wl_list_remove(&new_output.link);
+	if (new_surface.link.next) wl_list_remove(&new_surface.link);
+	if (new_xdg_toplevel.link.next) wl_list_remove(&new_xdg_toplevel.link);
+	if (new_xdg_popup.link.next) wl_list_remove(&new_xdg_popup.link);
+	if (xwayland_ready.link.next) wl_list_remove(&xwayland_ready.link);
+	if (new_xwayland_surface.link.next) wl_list_remove(&new_xwayland_surface.link);
+	if (new_input.link.next) wl_list_remove(&new_input.link);
+	if (request_cursor.link.next) wl_list_remove(&request_cursor.link);
+	if (new_text_input.link.next) wl_list_remove(&new_text_input.link);
+	if (new_toplevel_decoration.link.next) wl_list_remove(&new_toplevel_decoration.link);
+	if (request_set_selection.link.next) wl_list_remove(&request_set_selection.link);
 
+	pending_surface_commits.clear();
+	detach_active_pointer_constraint_listener(this);
+	active_pointer_constraint = nullptr;
+	pointer.reset();
 	keyboards.clear();
+	touch_devices.clear();
 
-	wlr_backend_destroy(backend);
-	wl_display_destroy_clients(display);
-	wl_display_destroy(display);
+	// Xwayland must not restart when its Wayland client is disconnected.
+	if (xwayland) wlr_xwayland_destroy(xwayland);
+	xwayland = nullptr;
+	if (display) wl_display_destroy_clients(display);
+	surface_buffer_chains.clear();
+	if (embedder_state) embedder_state->external_textures.clear();
+	while (callable_queue.execute()) {}
+
+	// Output destroy callbacks release scene/presentation leases. Do not
+	// reconfigure surviving outputs while tearing down the backend.
+	if (backend) wlr_backend_destroy(backend);
+	backend = nullptr;
+	output.reset();
+	outputs.clear();
+	output_manager.reset();
+	while (callable_queue.execute()) {}
+	if (scene) wlr_scene_node_destroy(&scene->tree.node);
+	scene = nullptr;
+	scene_output_layout = nullptr;
+	embedder_state.reset();
+	while (callable_queue.execute()) {}
+
+	// No worker may enqueue releases beyond this point.
+	callable_queue.close();
+	while (callable_queue.execute()) {}
+	if (allocator) wlr_allocator_destroy(allocator);
+	allocator = nullptr;
+	if (renderer) wlr_renderer_destroy(renderer);
+	renderer = nullptr;
+	if (queue_source) wl_event_source_remove(queue_source);
+	queue_source = nullptr;
+	if (sigint_source) wl_event_source_remove(sigint_source);
+	sigint_source = nullptr;
+	if (sigterm_source) wl_event_source_remove(sigterm_source);
+	sigterm_source = nullptr;
+	if (display) wl_display_destroy(display);
+	display = nullptr;
+	if (signal_mask_saved) {
+		// A second signal during cleanup must not become a default-action exit
+		// when the original caller's mask is restored after all workers join.
+		sigset_t signals;
+		sigemptyset(&signals);
+		sigaddset(&signals, SIGINT);
+		sigaddset(&signals, SIGTERM);
+		timespec no_wait{};
+		while (sigtimedwait(&signals, nullptr, &no_wait) >= 0) {}
+		pthread_sigmask(SIG_SETMASK, &previous_signal_mask, nullptr);
+		signal_mask_saved = false;
+	}
+	wlr_log(WLR_INFO, "zenith: shutdown complete");
 }
 
 static void server_xwayland_ready(wl_listener* listener, void* data) {
@@ -712,7 +827,6 @@ void server_new_input(wl_listener* listener, void* data) {
 			auto touch_device = std::make_unique<ZenithTouchDevice>(server, wlr_device);
 			server->touch_devices.push_back(std::move(touch_device));
 			break;
-			// TODO: handle destruct callback
 		}
 		default:
 			break;

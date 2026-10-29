@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <memory>
 #include <thread>
+#include <csignal>
 #include <unordered_set>
 #include "output.hpp"
 #include "input/keyboard.hpp"
@@ -52,34 +53,39 @@ class ZenithOutputManager;
 struct ZenithServer {
 private:
 	ZenithServer();
+	void initialize();
 
 	static ZenithServer* _instance;
 
 public:
 	static ZenithServer* instance();
 
-	void run(const char* startup_command);
+	int run(const char* startup_command);
+	~ZenithServer();
+	void request_shutdown(int status = 0); // Wayland thread only.
+	void shutdown();
+	bool is_shutting_down() const { return shutting_down.load(std::memory_order_acquire); }
 
 	std::thread::id main_thread_id;
 	std::string startup_command{};
 	float display_scale = 1.0f;
 
-	wl_display* display;
-	wlr_backend* backend;
-	wlr_renderer* renderer;
-	wlr_allocator* allocator;
-	wlr_compositor* compositor;
-	wlr_xdg_shell* xdg_shell;
-	wlr_xwayland* xwayland;
+	wl_display* display = nullptr;
+	wlr_backend* backend = nullptr;
+	wlr_renderer* renderer = nullptr;
+	wlr_allocator* allocator = nullptr;
+	wlr_compositor* compositor = nullptr;
+	wlr_xdg_shell* xdg_shell = nullptr;
+	wlr_xwayland* xwayland = nullptr;
 	bool xwayland_is_ready = false;
-	wlr_text_input_manager_v3* text_input_manager;
-	wlr_xdg_decoration_manager_v1* decoration_manager;
-	wlr_data_device_manager* data_device_manager;
+	wlr_text_input_manager_v3* text_input_manager = nullptr;
+	wlr_xdg_decoration_manager_v1* decoration_manager = nullptr;
+	wlr_data_device_manager* data_device_manager = nullptr;
 	wlr_relative_pointer_manager_v1* relative_pointer_manager = nullptr;
 	wlr_pointer_constraints_v1* pointer_constraints = nullptr;
 	wlr_viewporter* viewporter = nullptr;
 
-	wlr_output_layout* output_layout;
+	wlr_output_layout* output_layout = nullptr;
 	wlr_scene* scene = nullptr;
 	wlr_scene_output_layout* scene_output_layout = nullptr;
 	std::vector<std::shared_ptr<ZenithOutput>> outputs = {};
@@ -120,7 +126,7 @@ public:
 	std::unordered_map<size_t, std::shared_ptr<ZenithToplevelDecoration>> toplevel_decorations{};
 	std::unordered_map<size_t, wlr_box> toplevel_geometries{};
 
-	wlr_seat* seat;
+	wlr_seat* seat = nullptr;
 	std::unique_ptr<ZenithPointer> pointer;
 	wlr_pointer_constraint_v1* active_pointer_constraint = nullptr;
 	wl_listener active_pointer_constraint_destroy{};
@@ -133,6 +139,17 @@ public:
 	std::unordered_map<size_t, std::shared_ptr<SurfaceBufferChain<wlr_buffer>>> surface_buffer_chains{};
 
 	CallableQueue callable_queue{};
+	std::unordered_map<PendingSurfaceCommit*, std::unique_ptr<PendingSurfaceCommit>> pending_surface_commits;
+
+private:
+	std::atomic_bool shutting_down{false};
+	bool cleanup_started = false;
+	int exit_status = 0;
+	wl_event_source* sigint_source = nullptr;
+	wl_event_source* sigterm_source = nullptr;
+	wl_event_source* queue_source = nullptr;
+	sigset_t previous_signal_mask{};
+	bool signal_mask_saved = false;
 };
 
 bool is_main_thread();

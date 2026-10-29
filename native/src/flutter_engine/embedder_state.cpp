@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <thread>
 #include <unistd.h>
+#include <poll.h>
+#include <stdexcept>
 #include "server.hpp"
 #include "cursor_image_mapping.hpp"
 #include "cursor_debug.hpp"
@@ -111,38 +113,98 @@ EmbedderState::EmbedderState(wlr_egl* flutter_gl_context, wlr_egl* flutter_resou
 }
 
 void EmbedderState::run_engine() {
+	if (!event_loop)
+		throw std::runtime_error("could not create Flutter event loop");
+
+		queue_source = wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE,
+		[](int, uint32_t, void* data) {
+			static_cast<CallableQueue*>(data)->execute();
+			return 0;
+		}, &callable_queue);
+
+	task_source = wl_event_loop_add_fd(event_loop, platform_task_runner.timer_fd, WL_EVENT_READABLE,
+		[](int fd, uint32_t, void* data) {
+			auto* state = static_cast<EmbedderState*>(data);
+			uint64_t expiration_count;
+			if (read(fd, &expiration_count, sizeof(expiration_count)) > 0)
+				state->platform_task_runner.execute_expired_tasks();
+			return 0;
+		}, this);
+
+	if (!queue_source || !task_source)
+		throw std::runtime_error("could not attach Flutter event sources");
+
 	embedder_thread = std::thread([this]() {
-		auto callable_queue_fn = [](int fd, uint32_t mask, void* data) {
-			auto* queue = static_cast<CallableQueue*>(data);
-			return (int) queue->execute();
-		};
-
-		wl_event_loop_add_fd(event_loop, callable_queue.get_fd(), WL_EVENT_READABLE, callable_queue_fn,
-		                     &callable_queue);
-
-		while (true) {
+		while (loop_running) {
 			wl_event_loop_dispatch(event_loop, -1);
 		}
+		thread_stopped.store(true, std::memory_order_release);
+		ZenithServer::instance()->callable_queue.enqueue([] {});
 	});
 
 	callable_queue.enqueue([this] {
-		configure_and_run_engine();
-
-		platform_task_runner.set_engine(engine);
-
-		wl_event_loop_add_fd(event_loop, platform_task_runner.timer_fd, WL_EVENT_READABLE,
-		                     [](int fd, uint32_t mask, void* data) -> int {
-			                     auto* state = static_cast<EmbedderState*>(data);
-
-			                     uint64_t expiration_count;
-			                     read(state->platform_task_runner.timer_fd, &expiration_count, sizeof(uint64_t));
-
-			                     state->platform_task_runner.execute_expired_tasks();
-			                     return 0;
-		                     }, this);
-
-		register_platform_api();
+		if (stop_signal.requested()) return;
+		try {
+			configure_and_run_engine();
+			platform_task_runner.set_engine(engine);
+			register_platform_api();
+		} catch (const std::exception& error) {
+			wlr_log(WLR_ERROR, "zenith: Flutter startup failed: %s", error.what());
+			ZenithServer::instance()->callable_queue.enqueue([] {
+				ZenithServer::instance()->request_shutdown(1);
+			});
+		}
 	});
+}
+
+void EmbedderState::stop_engine() {
+	stop_signal.request(); // Wake a raster thread blocked in buffer acquisition.
+	if (!embedder_thread.joinable())
+		return;
+
+	callable_queue.close([this] {
+		key_repeater.cancel_repeat();
+		if (task_source) {
+			wl_event_source_remove(task_source);
+			task_source = nullptr;
+		}
+		platform_task_runner.stop();
+		if (engine) {
+			auto result = FlutterEngineShutdown(engine);
+			if (result != kSuccess)
+				wlr_log(WLR_ERROR, "zenith: Flutter shutdown failed: %d", result);
+			engine = nullptr;
+		}
+		messenger.SetEngine(nullptr);
+		if (aot_data) {
+			FlutterEngineCollectAOTData(aot_data);
+			aot_data = nullptr;
+		}
+		loop_running = false;
+	});
+
+	// Drain native callbacks/releases while their owners still live. Do not
+	// dispatch the display loop: that could admit new client/input/frame work.
+	auto& native_queue = ZenithServer::instance()->callable_queue;
+	while (!thread_stopped.load(std::memory_order_acquire)) {
+		native_queue.execute();
+		pollfd fd{native_queue.get_fd(), POLLIN, 0};
+		poll(&fd, 1, 20);
+	}
+
+	embedder_thread.join();
+	raster_target.reset();
+	raster_fbo = 0;
+}
+
+EmbedderState::~EmbedderState() {
+	stop_engine();
+	// Shutdown has joined all Flutter workers before destroying their contexts.
+	if (queue_source) wl_event_source_remove(queue_source);
+	if (task_source) wl_event_source_remove(task_source);
+	if (event_loop) wl_event_loop_destroy(event_loop);
+	wlr_egl_destroy(flutter_resource_gl_context);
+	wlr_egl_destroy(flutter_gl_context);
 }
 
 void EmbedderState::configure_and_run_engine() {
@@ -203,6 +265,7 @@ void EmbedderState::configure_and_run_engine() {
 	args.custom_task_runners = &task_runners;
 	args.command_line_argc = command_line_argv.size();
 	args.command_line_argv = command_line_argv.data();
+	args.shutdown_dart_vm_when_done = true;
 
 #ifndef DEBUG
 	/*
@@ -213,14 +276,15 @@ void EmbedderState::configure_and_run_engine() {
 	std::filesystem::path elf_path = executable_directory / "lib" / "libapp.so";
 	data_source.elf_path = elf_path.c_str();
 
-	FlutterEngineAOTData aot_data;
-	FlutterEngineCreateAOTData(&data_source, &aot_data);
+	if (FlutterEngineCreateAOTData(&data_source, &aot_data) != kSuccess)
+		throw std::runtime_error("could not load AOT data");
 
 	args.aot_data = aot_data;
 #endif
 
 	int result = FlutterEngineRun(FLUTTER_ENGINE_VERSION, &config, &args, this, &engine);
-	assert(result == kSuccess && engine != nullptr);
+	if (result != kSuccess || engine == nullptr)
+		throw std::runtime_error("FlutterEngineRun failed");
 }
 
 void EmbedderState::register_platform_api() {

@@ -191,9 +191,11 @@ ZenithPointer::ZenithPointer(ZenithServer* server)
 	seat_destroy.notify = [](wl_listener* listener, void*) {
 		ZenithPointer* pointer = wl_container_of(listener, pointer, seat_destroy);
 		wl_list_remove(&pointer->pointer_focus_change.link);
+		wl_list_init(&pointer->pointer_focus_change.link);
 		wl_list_remove(&pointer->client_cursor_destroy.link);
 		wl_list_init(&pointer->client_cursor_destroy.link);
 		wl_list_remove(&pointer->seat_destroy.link);
+		wl_list_init(&pointer->seat_destroy.link);
 	};
 	wl_signal_add(&server->seat->events.destroy, &seat_destroy);
 	/*
@@ -244,6 +246,19 @@ ZenithPointer::ZenithPointer(ZenithServer* server)
 
 	cursor_frame.notify = server_cursor_frame;
 	wl_signal_add(&cursor->events.frame, &cursor_frame);
+}
+
+ZenithPointer::~ZenithPointer() {
+	wl_list_remove(&client_cursor_destroy.link);
+	wl_list_remove(&pointer_focus_change.link);
+	wl_list_remove(&seat_destroy.link);
+	wl_list_remove(&cursor_motion.link);
+	wl_list_remove(&cursor_motion_absolute.link);
+	wl_list_remove(&cursor_button.link);
+	wl_list_remove(&cursor_axis.link);
+	wl_list_remove(&cursor_frame.link);
+	wlr_cursor_destroy(cursor);
+	wlr_xcursor_manager_destroy(cursor_mgr);
 }
 
 void server_cursor_motion(wl_listener* listener, void* data) {

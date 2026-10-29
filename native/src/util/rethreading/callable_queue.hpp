@@ -2,11 +2,8 @@
 
 #include <functional>
 #include <queue>
-#include "channel.hpp"
-#include <iostream>
-#include "assert.hpp"
+#include <mutex>
 #include <sys/eventfd.h>
-#include <optional>
 
 /*
  * Queue that stores and executes functions.
@@ -21,14 +18,22 @@
 class CallableQueue {
 	using Callable = std::function<void(void)>;
 
-	int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+	int fd;
 	std::queue<Callable> callables = {};
 	std::mutex mutex = {};
+	bool closed = false;
 
 public:
+	CallableQueue();
+	~CallableQueue();
+
 	[[nodiscard]] int get_fd() const;
 
-	void enqueue(const Callable& callable);
+	bool enqueue(const Callable& callable);
+
+	// Reject new work atomically, then run final after all accepted work.
+	// Captures are released by the consumer, on its owning thread.
+	void close(const Callable& final = {});
 
 	bool execute();
 };

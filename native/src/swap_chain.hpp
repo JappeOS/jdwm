@@ -8,6 +8,7 @@
 #include "util/array_view.hpp"
 #include "third_party/embedder.h"
 #include "output/damage_history.hpp"
+#include "util/rethreading/stop_signal.hpp"
 
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
@@ -52,7 +53,7 @@ struct SwapChain {
 
 	// Raster/producer thread only: may wait for GPU completion, without
 	// holding the chain mutex. Readers on the Wayland thread never wait.
-	[[nodiscard]] T* start_write();
+	[[nodiscard]] T* start_write(const StopSignal* stop = nullptr);
 
 	[[nodiscard]] zenith::render::Damage repair_damage();
 	[[nodiscard]] zenith::render::Damage damage_since(uint64_t generation, uint64_t after, uint64_t through);

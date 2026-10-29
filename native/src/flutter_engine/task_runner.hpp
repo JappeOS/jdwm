@@ -15,11 +15,16 @@ class TaskRunner {
 	FlutterEngine engine{};
 	std::mutex mutex{};
 	std::vector<Task> expired_tasks{};
+	bool stopped = false;
 
 public:
 	int timer_fd;
 
 	TaskRunner();
+
+	~TaskRunner();
+
+	void stop();
 
 	std::priority_queue<Task, std::vector<Task>, task_runner_compare> tasks{};
 

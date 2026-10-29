@@ -19,6 +19,7 @@
 #include "surface_buffer_chain.hpp"
 #include "external_texture_registry.hpp"
 #include "callable_queue.hpp"
+#include "util/rethreading/stop_signal.hpp"
 #include "message_structs.hpp"
 #include "text_input_model.h"
 #include "text_input_client.hpp"
@@ -36,6 +37,10 @@ struct EmbedderState {
 	EmbedderState(wlr_egl* flutter_gl_context, wlr_egl* flutter_resource_gl_context);
 
 	void run_engine();
+	// Called on the Wayland thread, while its objects and release queue live.
+	void stop_engine();
+	~EmbedderState();
+
 	void schedule_frame();
 
 	FlutterEngine get_engine() const;
@@ -96,6 +101,8 @@ struct EmbedderState {
 
 	void update_text_editing_state();
 
+	StopSignal stop_signal;
+
 	/*
 	 * The following fields have to be public because they are used by Flutter engine callbacks,
 	 * which are just plain C functions.
@@ -129,6 +136,11 @@ private:
 	void register_platform_api();
 
 	FlutterEngine engine = nullptr;
+	FlutterEngineAOTData aot_data = nullptr;
+	std::atomic_bool thread_stopped{false};
+	bool loop_running = true; // Embedder thread only.
+	wl_event_source* task_source = nullptr;
+	wl_event_source* queue_source = nullptr;
 	// The thread on which the Flutter engine and its task runner is run.
 	std::thread embedder_thread;
 

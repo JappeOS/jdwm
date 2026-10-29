@@ -1,4 +1,6 @@
 #pragma once
+#include <unordered_map>
+#include <utility>
 
 extern "C" {
 #define static
@@ -11,6 +13,7 @@ struct ZenithServer;
 
 struct ZenithTouchDevice {
 	ZenithTouchDevice(ZenithServer* server, wlr_input_device* wlr_device);
+	~ZenithTouchDevice();
 
 	ZenithServer* server;
 	wlr_input_device* wlr_device;
@@ -19,6 +22,7 @@ struct ZenithTouchDevice {
 	wl_listener touch_motion{};
 	wl_listener touch_up{};
 	wl_listener touch_cancel{};
+	wl_listener destroy{};
 
 	std::unordered_map<int32_t, std::pair<double, double>> last_touch_coordinates;
 };

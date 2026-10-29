@@ -270,6 +270,8 @@ void output_create_handle(wl_listener* listener, void* data) {
 
 	auto output = std::make_shared<ZenithOutput>(wlr_output);
 	if (!output->enable()) {
+		// Even an output that never became usable owns listeners and timers.
+		output_destroy(&output->destroy, nullptr);
 		return;
 	}
 	wlr_log(WLR_INFO, "zenith: new output '%s' enabled (%dx%d)",
@@ -598,6 +600,9 @@ std::shared_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 			break;
 		}
 		buffers.emplace_back(scoped_wlr_gles2_buffer(gles2_buffer));
+		// The shared wrapper now owns a consumer lock. Release the allocator's
+		// producer reference so the last lease actually frees the allocation.
+		wlr_buffer_drop(buf);
 	}
 	free_drm_format(drm_format);
 	if (buffers.size() < 4) {
@@ -621,6 +626,10 @@ std::shared_ptr<SwapChain<wlr_gles2_buffer>> create_output_swap_chain(
 void output_destroy(wl_listener* listener, void* data) {
 	ZenithOutput* output = wl_container_of(listener, output, destroy);
 	auto* server = ZenithServer::instance();
+	// The manager removes the owning vector entry during this callback.
+	std::shared_ptr<ZenithOutput> keep_alive;
+	for (const auto& item : server->outputs)
+		if (item.get() == output) keep_alive = item;
 
 	// wlroots emits output->events.destroy and then asserts all output listener
 	// lists are empty in wlr_output_finish().

@@ -1,4 +1,12 @@
 #pragma once
+#include <memory>
+
+struct SurfaceCommitMessage;
+struct PendingSurfaceCommit {
+	std::unique_ptr<SurfaceCommitMessage> message;
+	struct wl_event_source* source = nullptr;
+	~PendingSurfaceCommit();
+};
 
 extern "C" {
 #include <wlr/types/wlr_xdg_shell.h>

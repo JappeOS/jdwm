@@ -2,9 +2,22 @@
 #include "task_runner.hpp"
 #include <sys/timerfd.h>
 #include <cassert>
+#include <unistd.h>
 
 TaskRunner::TaskRunner() : timer_fd{timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)} {
 	expired_tasks.reserve(8);
+}
+
+TaskRunner::~TaskRunner() { close(timer_fd); }
+
+void TaskRunner::stop() {
+	std::scoped_lock lock(mutex);
+	stopped = true;
+	tasks = {};
+	expired_tasks.clear();
+	engine = nullptr;
+	itimerspec disarmed{};
+	timerfd_settime(timer_fd, 0, &disarmed, nullptr);
 }
 
 void TaskRunner::set_engine(FlutterEngine engine) {
@@ -13,6 +26,8 @@ void TaskRunner::set_engine(FlutterEngine engine) {
 
 void TaskRunner::add_task(uint64_t target_time, FlutterTask task) {
 	std::scoped_lock lock(mutex);
+	if (stopped)
+		return;
 	tasks.emplace(target_time, task);
 	schedule_timer();
 }

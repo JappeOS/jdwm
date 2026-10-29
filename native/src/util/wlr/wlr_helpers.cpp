@@ -227,6 +227,8 @@ struct wlr_gles2_buffer* create_buffer(struct wlr_gles2_renderer* renderer, stru
 	return buffer;
 
 	error_image:
+	glDeleteFramebuffers(1, &buffer->fbo);
+	glDeleteRenderbuffers(1, &buffer->rbo);
 	wlr_egl_destroy_image(renderer->egl, buffer->image);
 	free(buffer);
 	return nullptr;

@@ -286,7 +286,13 @@ void zenith_surface_destroy(wl_listener* listener, void* data) {
 	wl_list_remove(&zenith_surface->destroy.link);
 
 	server->surface_buffer_chains.erase(zenith_surface->id);
-	server->embedder_state->external_textures.surface_destroyed(zenith_surface->id);
+	for (auto it = server->pending_surface_commits.begin(); it != server->pending_surface_commits.end();) {
+		if (it->second->message->view_id == zenith_surface->id)
+			it = server->pending_surface_commits.erase(it);
+		else ++it;
+	}
+	if (server->embedder_state)
+		server->embedder_state->external_textures.surface_destroyed(zenith_surface->id);
 	bool erased = server->surfaces.erase(zenith_surface->id);
 	assert(erased);
 	// TODO: Send destroy to Flutter.
@@ -450,28 +456,32 @@ void commit_surface(SurfaceCommitMessage* commit_message) {
 }
 
 // Commits the buffer when the file descriptor becomes readable.
+PendingSurfaceCommit::~PendingSurfaceCommit() {
+	if (source)
+		wl_event_source_remove(source);
+}
+
 void schedule_buffer_commit_on_fd(int fd, std::unique_ptr<SurfaceCommitMessage> commit_message) {
-	struct SourceData {
-		std::unique_ptr<SurfaceCommitMessage> commit_message;
-		wl_event_source* source; // I want the source to remove itself.
-	};
-
-	auto* source_data = new SourceData{
-		  .commit_message = std::move(commit_message),
-		  .source = nullptr,
-	};
-
-	wl_event_loop_fd_func_t func = [](int fd, uint32_t mask, void* data) {
-		auto source_data = static_cast<SourceData*>(data);
-
-		commit_surface(source_data->commit_message.get());
-
-		wl_event_source_remove(source_data->source);
-		delete source_data;
+	auto* server = ZenithServer::instance();
+	auto pending = std::make_unique<PendingSurfaceCommit>();
+	pending->message = std::move(commit_message);
+	auto* key = pending.get();
+	pending->source = wl_event_loop_add_fd(wl_display_get_event_loop(server->display), fd,
+		WL_EVENT_READABLE | WL_EVENT_HANGUP | WL_EVENT_ERROR, [](int, uint32_t mask, void* data) {
+		auto* server = ZenithServer::instance();
+		auto node = server->pending_surface_commits.extract(static_cast<PendingSurfaceCommit*>(data));
+		auto& pending = node.mapped();
+		if (!server->is_shutting_down() && (mask & WL_EVENT_READABLE) &&
+		    !(mask & (WL_EVENT_ERROR | WL_EVENT_HANGUP)) &&
+		    server->surfaces.count(pending->message->view_id))
+			commit_surface(pending->message.get());
 		return 0;
-	};
+	}, key);
 
-	wl_event_loop* event_loop = wl_display_get_event_loop(ZenithServer::instance()->display);
-	source_data->source = wl_event_loop_add_fd(
-		event_loop, fd, WL_EVENT_READABLE | WL_EVENT_HANGUP | WL_EVENT_ERROR, func, source_data);
+	if (!pending->source) {
+		wlr_log(WLR_ERROR, "zenith: failed to watch client buffer fence");
+		return;
+	}
+
+	server->pending_surface_commits.emplace(key, std::move(pending));
 }
