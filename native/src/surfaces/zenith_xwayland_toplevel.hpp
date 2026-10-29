@@ -58,6 +58,7 @@ struct ZenithXwaylandToplevel : public ZenithToplevel {
 	void set_visible(bool value) override;
 	bool visible() const override;
 	bool maximized() const override;
+	bool fullscreen() const override;
 	std::optional<ToplevelDecoration> decoration() const override;
 	const char* protocol() const override;
 };

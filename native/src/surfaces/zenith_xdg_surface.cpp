@@ -95,6 +95,8 @@ void zenith_xdg_surface_map(wl_listener* listener, void* data) {
 	}
 
 	server->embedder_state->map_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
+	if (auto it = server->toplevels.find(id); it != server->toplevels.end())
+		server->embedder_state->set_window_state(id, it->second->maximized(), it->second->visible());
 	server->output_manager->schedule_compositor_frame();
 }
 

@@ -16,6 +16,7 @@ T _$identity<T>(T value) => value;
 mixin _$XdgToplevelState {
   bool get visible;
   bool get maximized;
+  bool get fullscreen;
   Key get virtualKeyboardKey;
   FocusNode get focusNode;
   Object get interactiveMoveRequested;
@@ -40,6 +41,8 @@ mixin _$XdgToplevelState {
             (identical(other.visible, visible) || other.visible == visible) &&
             (identical(other.maximized, maximized) ||
                 other.maximized == maximized) &&
+            (identical(other.fullscreen, fullscreen) ||
+                other.fullscreen == fullscreen) &&
             (identical(other.virtualKeyboardKey, virtualKeyboardKey) ||
                 other.virtualKeyboardKey == virtualKeyboardKey) &&
             (identical(other.focusNode, focusNode) ||
@@ -61,6 +64,7 @@ mixin _$XdgToplevelState {
       runtimeType,
       visible,
       maximized,
+      fullscreen,
       virtualKeyboardKey,
       focusNode,
       const DeepCollectionEquality().hash(interactiveMoveRequested),
@@ -71,7 +75,7 @@ mixin _$XdgToplevelState {
 
   @override
   String toString() {
-    return 'XdgToplevelState(visible: $visible, maximized: $maximized, virtualKeyboardKey: $virtualKeyboardKey, focusNode: $focusNode, interactiveMoveRequested: $interactiveMoveRequested, interactiveResizeRequested: $interactiveResizeRequested, decoration: $decoration, title: $title, appId: $appId)';
+    return 'XdgToplevelState(visible: $visible, maximized: $maximized, fullscreen: $fullscreen, virtualKeyboardKey: $virtualKeyboardKey, focusNode: $focusNode, interactiveMoveRequested: $interactiveMoveRequested, interactiveResizeRequested: $interactiveResizeRequested, decoration: $decoration, title: $title, appId: $appId)';
   }
 }
 
@@ -84,6 +88,7 @@ abstract mixin class $XdgToplevelStateCopyWith<$Res> {
   $Res call(
       {bool visible,
       bool maximized,
+      bool fullscreen,
       Key virtualKeyboardKey,
       FocusNode focusNode,
       Object interactiveMoveRequested,
@@ -108,6 +113,7 @@ class _$XdgToplevelStateCopyWithImpl<$Res>
   $Res call({
     Object? visible = null,
     Object? maximized = null,
+    Object? fullscreen = null,
     Object? virtualKeyboardKey = null,
     Object? focusNode = null,
     Object? interactiveMoveRequested = null,
@@ -124,6 +130,10 @@ class _$XdgToplevelStateCopyWithImpl<$Res>
       maximized: null == maximized
           ? _self.maximized
           : maximized // ignore: cast_nullable_to_non_nullable
+              as bool,
+      fullscreen: null == fullscreen
+          ? _self.fullscreen
+          : fullscreen // ignore: cast_nullable_to_non_nullable
               as bool,
       virtualKeyboardKey: null == virtualKeyboardKey
           ? _self.virtualKeyboardKey
@@ -252,6 +262,7 @@ extension XdgToplevelStatePatterns on XdgToplevelState {
     TResult Function(
             bool visible,
             bool maximized,
+            bool fullscreen,
             Key virtualKeyboardKey,
             FocusNode focusNode,
             Object interactiveMoveRequested,
@@ -268,6 +279,7 @@ extension XdgToplevelStatePatterns on XdgToplevelState {
         return $default(
             _that.visible,
             _that.maximized,
+            _that.fullscreen,
             _that.virtualKeyboardKey,
             _that.focusNode,
             _that.interactiveMoveRequested,
@@ -298,6 +310,7 @@ extension XdgToplevelStatePatterns on XdgToplevelState {
     TResult Function(
             bool visible,
             bool maximized,
+            bool fullscreen,
             Key virtualKeyboardKey,
             FocusNode focusNode,
             Object interactiveMoveRequested,
@@ -313,6 +326,7 @@ extension XdgToplevelStatePatterns on XdgToplevelState {
         return $default(
             _that.visible,
             _that.maximized,
+            _that.fullscreen,
             _that.virtualKeyboardKey,
             _that.focusNode,
             _that.interactiveMoveRequested,
@@ -342,6 +356,7 @@ extension XdgToplevelStatePatterns on XdgToplevelState {
     TResult? Function(
             bool visible,
             bool maximized,
+            bool fullscreen,
             Key virtualKeyboardKey,
             FocusNode focusNode,
             Object interactiveMoveRequested,
@@ -357,6 +372,7 @@ extension XdgToplevelStatePatterns on XdgToplevelState {
         return $default(
             _that.visible,
             _that.maximized,
+            _that.fullscreen,
             _that.virtualKeyboardKey,
             _that.focusNode,
             _that.interactiveMoveRequested,
@@ -376,6 +392,7 @@ class _XdgToplevelState implements XdgToplevelState {
   const _XdgToplevelState(
       {required this.visible,
       required this.maximized,
+      this.fullscreen = false,
       required this.virtualKeyboardKey,
       required this.focusNode,
       required this.interactiveMoveRequested,
@@ -388,6 +405,9 @@ class _XdgToplevelState implements XdgToplevelState {
   final bool visible;
   @override
   final bool maximized;
+  @override
+  @JsonKey()
+  final bool fullscreen;
   @override
   final Key virtualKeyboardKey;
   @override
@@ -419,6 +439,8 @@ class _XdgToplevelState implements XdgToplevelState {
             (identical(other.visible, visible) || other.visible == visible) &&
             (identical(other.maximized, maximized) ||
                 other.maximized == maximized) &&
+            (identical(other.fullscreen, fullscreen) ||
+                other.fullscreen == fullscreen) &&
             (identical(other.virtualKeyboardKey, virtualKeyboardKey) ||
                 other.virtualKeyboardKey == virtualKeyboardKey) &&
             (identical(other.focusNode, focusNode) ||
@@ -440,6 +462,7 @@ class _XdgToplevelState implements XdgToplevelState {
       runtimeType,
       visible,
       maximized,
+      fullscreen,
       virtualKeyboardKey,
       focusNode,
       const DeepCollectionEquality().hash(interactiveMoveRequested),
@@ -450,7 +473,7 @@ class _XdgToplevelState implements XdgToplevelState {
 
   @override
   String toString() {
-    return 'XdgToplevelState(visible: $visible, maximized: $maximized, virtualKeyboardKey: $virtualKeyboardKey, focusNode: $focusNode, interactiveMoveRequested: $interactiveMoveRequested, interactiveResizeRequested: $interactiveResizeRequested, decoration: $decoration, title: $title, appId: $appId)';
+    return 'XdgToplevelState(visible: $visible, maximized: $maximized, fullscreen: $fullscreen, virtualKeyboardKey: $virtualKeyboardKey, focusNode: $focusNode, interactiveMoveRequested: $interactiveMoveRequested, interactiveResizeRequested: $interactiveResizeRequested, decoration: $decoration, title: $title, appId: $appId)';
   }
 }
 
@@ -465,6 +488,7 @@ abstract mixin class _$XdgToplevelStateCopyWith<$Res>
   $Res call(
       {bool visible,
       bool maximized,
+      bool fullscreen,
       Key virtualKeyboardKey,
       FocusNode focusNode,
       Object interactiveMoveRequested,
@@ -489,6 +513,7 @@ class __$XdgToplevelStateCopyWithImpl<$Res>
   $Res call({
     Object? visible = null,
     Object? maximized = null,
+    Object? fullscreen = null,
     Object? virtualKeyboardKey = null,
     Object? focusNode = null,
     Object? interactiveMoveRequested = null,
@@ -505,6 +530,10 @@ class __$XdgToplevelStateCopyWithImpl<$Res>
       maximized: null == maximized
           ? _self.maximized
           : maximized // ignore: cast_nullable_to_non_nullable
+              as bool,
+      fullscreen: null == fullscreen
+          ? _self.fullscreen
+          : fullscreen // ignore: cast_nullable_to_non_nullable
               as bool,
       virtualKeyboardKey: null == virtualKeyboardKey
           ? _self.virtualKeyboardKey

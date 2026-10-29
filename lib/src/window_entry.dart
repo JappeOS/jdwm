@@ -20,6 +20,8 @@ class WindowEntry extends ChangeNotifier {
   Rect _windowRect = Rect.zero;
   Widget? _toolbar;
   bool _maximized = false;
+  bool _fullscreen = false;
+  Rect? restoreRectAfterFullscreen;
   bool _minimized = false;
   Rect? restoreRectAfterMaximize;
   String? restoreMonitorIdAfterMaximize;
@@ -35,11 +37,25 @@ class WindowEntry extends ChangeNotifier {
   String? get monitorId => _monitorId;
   String get title => _title;
   ImageProvider get icon => _icon;
-  bool get usesToolbar => _chromeMode == WindowChromeMode.decorated;
+  bool get usesToolbar =>
+      !fullscreen && _chromeMode == WindowChromeMode.decorated;
   WindowChromeMode get chromeMode => _chromeMode;
   Rect get windowRect => _windowRect;
   Widget? get toolbar => _toolbar;
   bool get maximized => _maximized;
+  bool get fullscreen => _fullscreen;
+  set fullscreen(bool value) {
+    if (_fullscreen == value) return;
+    if (value) {
+      restoreRectAfterFullscreen = windowRect;
+    } else if (restoreRectAfterFullscreen != null) {
+      _windowRect = restoreRectAfterFullscreen!;
+      restoreRectAfterFullscreen = null;
+    }
+    _fullscreen = value;
+    notifyListeners();
+  }
+
   bool get minimized => _minimized;
   WindowDock get windowDock => _windowDock;
 

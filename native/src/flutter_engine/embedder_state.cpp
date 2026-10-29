@@ -923,11 +923,15 @@ void EmbedderState::set_app_id(size_t view_id, const std::string& app_id, const 
 }
 
 void EmbedderState::set_window_state(size_t view_id, bool maximized, bool visible, const std::string& protocol) {
+	auto* server = ZenithServer::instance();
+	auto it = server->toplevels.find(view_id);
+	const bool fullscreen = it != server->toplevels.end() && it->second->fullscreen();
 	callable_queue.enqueue([=] {
 		if (protocol == "xdg") {
 			auto value = std::make_unique<EncodableValue>(EncodableMap{
 				  {EncodableValue("view_id"),    EncodableValue((int64_t) view_id)},
 				  {EncodableValue("maximized"),  EncodableValue(maximized)},
+				  {EncodableValue("fullscreen"), EncodableValue(fullscreen)},
 				  {EncodableValue("visible"),    EncodableValue(visible)},
 			});
 			platform_method_channel->InvokeMethod("set_window_state", std::move(value));
@@ -936,6 +940,7 @@ void EmbedderState::set_window_state(size_t view_id, bool maximized, bool visibl
 			  {EncodableValue("view_id"),    EncodableValue((int64_t) view_id)},
 			  {EncodableValue("protocol"),   EncodableValue(protocol)},
 			  {EncodableValue("maximized"),  EncodableValue(maximized)},
+			  {EncodableValue("fullscreen"), EncodableValue(fullscreen)},
 			  {EncodableValue("visible"),    EncodableValue(visible)},
 		});
 		platform_method_channel->InvokeMethod("set_toplevel_state", std::move(generic_value));

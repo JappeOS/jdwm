@@ -15,6 +15,7 @@ struct ZenithToplevel {
 	virtual void set_visible(bool value) = 0;
 	virtual bool visible() const = 0;
 	virtual bool maximized() const = 0;
+	virtual bool fullscreen() const = 0;
 	virtual std::optional<ToplevelDecoration> decoration() const = 0;
 	virtual const char* protocol() const = 0;
 };

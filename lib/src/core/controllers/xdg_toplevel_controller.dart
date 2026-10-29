@@ -5,6 +5,7 @@ import 'package:jdwm/src/core/models/toplevel_decoration.dart';
 class XdgToplevelSnapshot {
   final bool visible;
   final bool maximized;
+  final bool fullscreen;
   final Key virtualKeyboardKey;
   final FocusNode focusNode;
   final Object interactiveMoveRequested;
@@ -16,6 +17,7 @@ class XdgToplevelSnapshot {
   const XdgToplevelSnapshot({
     required this.visible,
     required this.maximized,
+    this.fullscreen = false,
     required this.virtualKeyboardKey,
     required this.focusNode,
     required this.interactiveMoveRequested,
@@ -53,6 +55,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: value,
       maximized: state.maximized,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: state.interactiveMoveRequested,
@@ -67,6 +70,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: state.visible,
       maximized: state.maximized,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: Object(),
@@ -84,6 +88,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: state.visible,
       maximized: state.maximized,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: state.interactiveMoveRequested,
@@ -101,6 +106,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: state.visible,
       maximized: state.maximized,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: state.interactiveMoveRequested,
@@ -115,6 +121,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: state.visible,
       maximized: state.maximized,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: state.interactiveMoveRequested,
@@ -129,6 +136,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: state.visible,
       maximized: state.maximized,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: state.interactiveMoveRequested,
@@ -143,6 +151,7 @@ class XdgToplevelController {
     return XdgToplevelSnapshot(
       visible: state.visible,
       maximized: value,
+      fullscreen: state.fullscreen,
       virtualKeyboardKey: state.virtualKeyboardKey,
       focusNode: state.focusNode,
       interactiveMoveRequested: state.interactiveMoveRequested,

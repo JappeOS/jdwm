@@ -30,6 +30,7 @@ class ManagedWindowInfo {
     required this.visible,
     required this.maximized,
     required this.focused,
+    this.fullscreen = false,
   });
 
   final int viewId;
@@ -39,6 +40,7 @@ class ManagedWindowInfo {
   final bool visible;
   final bool maximized;
   final bool focused;
+  final bool fullscreen;
 }
 
 class WindowManager extends StatefulWidget {
@@ -108,7 +110,7 @@ class WindowManagerState extends State<WindowManager> {
   }
 
   double _backendClientInsetTopFor(WindowEntry entry) {
-    if (entry.chromeMode != WindowChromeMode.decorated) {
+    if (!entry.usesToolbar) {
       return 0;
     }
     return entry.backendContentInsetTop;
@@ -375,6 +377,16 @@ class WindowManagerState extends State<WindowManager> {
       ),
     );
 
+    subs.add(_backendContainer!
+        .listen(xdgToplevelStatesProvider(viewId).select((v) => v.fullscreen),
+            (_, next) {
+      if (entry.fullscreen == next) return;
+      entry.fullscreen = next;
+      if (next) requestFocus(entry);
+      syncBackendWindowGeometry(entry, force: true);
+      _notifyWindowStateListeners();
+    }, fireImmediately: true));
+
     subs.add(
       _backendContainer!.listen(
         xdgToplevelStatesProvider(viewId).select((v) => v.maximized),
@@ -417,7 +429,7 @@ class WindowManagerState extends State<WindowManager> {
           entry.chromeMode = next == ToplevelDecoration.serverSide
               ? WindowChromeMode.decorated
               : WindowChromeMode.borderless;
-          if (entry.chromeMode != WindowChromeMode.decorated) {
+          if (!entry.usesToolbar) {
             entry.backendContentInsetTop = 0;
           }
           _updateBackendWindowSizeFromState(viewId, entry);
@@ -467,6 +479,7 @@ class WindowManagerState extends State<WindowManager> {
   }
 
   void _updateBackendWindowSizeFromState(int viewId, WindowEntry entry) {
+    if (entry.fullscreen) return;
     final viewportRect = _backendViewportRectForEntry(viewId);
     if (viewportRect.size.isEmpty) {
       return;
@@ -534,7 +547,7 @@ class WindowManagerState extends State<WindowManager> {
     // Keep initial spawn placement constrained to monitor bounds, but
     // do not continuously clamp subsequent backend geometry updates.
     // Continuous clamping breaks cross-monitor interactive resize/move.
-    entry.windowRect = nextRect;
+    if (!entry.fullscreen) entry.windowRect = nextRect;
     _notifyWindowStateListeners();
   }
 
@@ -749,6 +762,7 @@ class WindowManagerState extends State<WindowManager> {
           appId: state.appId,
           visible: state.visible,
           maximized: state.maximized,
+          fullscreen: state.fullscreen,
           focused: focusedViewId == viewId,
         ),
       );
@@ -782,6 +796,7 @@ class WindowManagerState extends State<WindowManager> {
       return entry.windowRect;
     }
 
+    if (entry.fullscreen) return monitor.bounds;
     final usable = monitor.usableBounds;
     if (entry.maximized) {
       return usable;
@@ -890,7 +905,9 @@ class WindowManagerState extends State<WindowManager> {
       return;
     }
     for (final entry in _backendWindows.values) {
-      if (!entry.maximized && entry.windowDock == WindowDock.normal) {
+      if (!entry.fullscreen &&
+          !entry.maximized &&
+          entry.windowDock == WindowDock.normal) {
         continue;
       }
       syncBackendWindowGeometry(entry);

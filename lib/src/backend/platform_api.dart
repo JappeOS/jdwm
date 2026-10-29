@@ -616,13 +616,15 @@ class PlatformApi extends _$PlatformApi {
         final dynamic rawMaximized = event["maximized"];
         final dynamic rawVisible = event["visible"];
         if (rawMaximized is bool && rawVisible is bool) {
-          ref
-              .read(xdgToplevelStatesProvider(viewId).notifier)
-              .setWindowState(visible: rawVisible, maximized: rawMaximized);
+          ref.read(xdgToplevelStatesProvider(viewId).notifier).setWindowState(
+              visible: rawVisible,
+              maximized: rawMaximized,
+              fullscreen: event["fullscreen"] as bool?);
           _upsertWindowInfo(
             viewId,
             visible: rawVisible,
             maximized: rawMaximized,
+            fullscreen: event["fullscreen"] as bool?,
           );
         }
         break;
@@ -672,6 +674,7 @@ class PlatformApi extends _$PlatformApi {
       appId: toplevel.appId,
       visible: toplevel.visible,
       maximized: toplevel.maximized,
+      fullscreen: toplevel.fullscreen,
     );
   }
 
@@ -682,6 +685,7 @@ class PlatformApi extends _$PlatformApi {
     String? appId,
     bool? visible,
     bool? maximized,
+    bool? fullscreen,
     BackendWindowInventoryChangeType changeType =
         BackendWindowInventoryChangeType.updated,
   }) {
@@ -699,6 +703,7 @@ class PlatformApi extends _$PlatformApi {
       appId: appId ?? previous?.appId ?? fallback.appId,
       visible: visible ?? previous?.visible ?? fallback.visible,
       maximized: maximized ?? previous?.maximized ?? fallback.maximized,
+      fullscreen: fullscreen ?? previous?.fullscreen ?? fallback.fullscreen,
     );
     if (previous == next) {
       return;
@@ -857,10 +862,14 @@ class PlatformApi extends _$PlatformApi {
     }
     bool maximized = event["maximized"] as bool;
     bool visible = event["visible"] as bool;
-    ref
-        .read(xdgToplevelStatesProvider(viewId).notifier)
-        .setWindowState(visible: visible, maximized: maximized);
-    _upsertWindowInfo(viewId, visible: visible, maximized: maximized);
+    ref.read(xdgToplevelStatesProvider(viewId).notifier).setWindowState(
+        visible: visible,
+        maximized: maximized,
+        fullscreen: event["fullscreen"] as bool?);
+    _upsertWindowInfo(viewId,
+        visible: visible,
+        maximized: maximized,
+        fullscreen: event["fullscreen"] as bool?);
   }
 
   void _setMonitors(dynamic event) {
@@ -966,6 +975,7 @@ class BackendWindowInfo {
     required this.appId,
     required this.visible,
     required this.maximized,
+    this.fullscreen = false,
   });
 
   final int viewId;
@@ -974,6 +984,7 @@ class BackendWindowInfo {
   final String appId;
   final bool visible;
   final bool maximized;
+  final bool fullscreen;
 
   bool get hasAppId => appId.trim().isNotEmpty;
 
@@ -991,12 +1002,13 @@ class BackendWindowInfo {
         other.title == title &&
         other.appId == appId &&
         other.visible == visible &&
-        other.maximized == maximized;
+        other.maximized == maximized &&
+        other.fullscreen == fullscreen;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(viewId, protocol, title, appId, visible, maximized);
+  int get hashCode => Object.hash(
+      viewId, protocol, title, appId, visible, maximized, fullscreen);
 }
 
 @immutable

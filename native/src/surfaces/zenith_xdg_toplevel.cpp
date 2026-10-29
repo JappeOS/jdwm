@@ -122,6 +122,8 @@ void zenith_xdg_toplevel_commit(wl_listener* listener, void* data) {
 		// When an xdg_surface performs an initial commit, the compositor must
 		// reply with a configure so the client can map the surface.
 		wlr_log(WLR_INFO, "zenith: Scheduling initial configure for toplevel");
+		wlr_xdg_toplevel_set_fullscreen(zenith_xdg_toplevel->xdg_toplevel, zenith_xdg_toplevel->fullscreen());
+		server->embedder_state->set_window_state(id, zenith_xdg_toplevel->maximized(), zenith_xdg_toplevel->visible());
 		wlr_xdg_surface_schedule_configure(xdg_surface);
 	}
 }
@@ -212,6 +214,9 @@ void zenith_xdg_toplevel_request_fullscreen(wl_listener* listener, void* data) {
 	if (toplevel->base->initialized) {
 		wlr_xdg_toplevel_set_fullscreen(toplevel, toplevel->requested.fullscreen);
 	}
+	ZenithServer::instance()->embedder_state->set_window_state(
+		zenith_xdg_toplevel->zenith_xdg_surface->zenith_surface->id,
+		zenith_xdg_toplevel->maximized(), zenith_xdg_toplevel->visible());
 }
 
 void zenith_xdg_toplevel_request_maximize(wl_listener* listener, void* data) {

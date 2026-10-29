@@ -144,7 +144,7 @@ final class XdgToplevelStatesProvider
   }
 }
 
-String _$xdgToplevelStatesHash() => r'41bd3b0f400421da45824e346b3bf35a98012753';
+String _$xdgToplevelStatesHash() => r'81290f55d1bd03bb0dc1f6499a9cbe3e4fdadd1f';
 
 final class XdgToplevelStatesFamily extends $Family
     with

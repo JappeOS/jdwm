@@ -43,6 +43,8 @@ struct ZenithXdgToplevel : public ZenithToplevel {
 
 	bool maximized() const override;
 
+	bool fullscreen() const override { return xdg_toplevel->requested.fullscreen; }
+
 	std::optional<ToplevelDecoration> decoration() const override;
 
 	const char* protocol() const override;

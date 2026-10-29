@@ -41,7 +41,7 @@ final class MappedWindowListProvider
   }
 }
 
-String _$mappedWindowListHash() => r'9e99ef4b404610400dae4d1f79c5eff6674737d2';
+String _$mappedWindowListHash() => r'd45218c3998e9a302b7159f377e5c5bf5ef33083';
 
 abstract class _$MappedWindowList extends $Notifier<IList<int>> {
   IList<int> build();
@@ -371,7 +371,7 @@ final class PlatformApiProvider
   }
 }
 
-String _$platformApiHash() => r'ffec547725d3449f4e3da3a4433f072fd35aeda1';
+String _$platformApiHash() => r'411c0dbe432d00cde25cea128cf2ca03edd64797';
 
 abstract class _$PlatformApi extends $Notifier<PlatformApiState> {
   PlatformApiState build();

@@ -157,6 +157,10 @@ bool ZenithXwaylandToplevel::visible() const {
 	return is_visible;
 }
 
+bool ZenithXwaylandToplevel::fullscreen() const {
+	return xwayland_surface->fullscreen;
+}
+
 bool ZenithXwaylandToplevel::maximized() const {
 	return is_maximized;
 }
@@ -481,6 +485,10 @@ void zenith_xwayland_surface_request_fullscreen(wl_listener* listener, void* dat
 	(void)data;
 	ZenithXwaylandToplevel* toplevel = wl_container_of(listener, toplevel, request_fullscreen);
 	wlr_xwayland_surface_set_fullscreen(toplevel->xwayland_surface, toplevel->xwayland_surface->fullscreen);
+	if (toplevel->ensure_registered()) {
+		ZenithServer::instance()->embedder_state->set_window_state(
+			toplevel->view_id, toplevel->maximized(), toplevel->visible(), "xwayland");
+	}
 }
 
 void zenith_xwayland_surface_set_title(wl_listener* listener, void* data) {

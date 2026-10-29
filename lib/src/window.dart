@@ -88,8 +88,7 @@ class _WindowState extends State<Window> {
   }
 
   double _backendClientInsetTopFor(WindowEntry entry) {
-    if (entry.backendViewId == null ||
-        entry.chromeMode != WindowChromeMode.decorated) {
+    if (entry.backendViewId == null || !entry.usesToolbar) {
       return 0;
     }
     return entry.backendContentInsetTop;
@@ -179,7 +178,7 @@ class _WindowState extends State<Window> {
       xdgToplevelStatesProvider(viewId)
           .select((v) => v.interactiveMoveRequested),
       (_, __) {
-        if (_currentPointerButtons == 0) {
+        if (widget.entry.fullscreen || _currentPointerButtons == 0) {
           _backendInteractiveMoveActive = false;
           return;
         }
@@ -193,7 +192,7 @@ class _WindowState extends State<Window> {
       xdgToplevelStatesProvider(viewId)
           .select((v) => v.interactiveResizeRequested),
       (_, next) {
-        if (_currentPointerButtons == 0) {
+        if (widget.entry.fullscreen || _currentPointerButtons == 0) {
           _backendInteractiveResizeActiveEdge = null;
           widget.entry.backendInteractiveResizeEdge = null;
           return;
@@ -213,6 +212,22 @@ class _WindowState extends State<Window> {
       return;
     }
     _currentPointerButtons = event.buttons;
+    if (widget.entry.fullscreen) {
+      if (_backendInteractiveMoveActive ||
+          _backendInteractiveResizeActiveEdge != null) {
+        WindowManager.of(context)?.endClientCursor();
+      }
+      _backendInteractiveMoveActive = false;
+      _backendInteractiveResizeActiveEdge = null;
+      widget.entry.backendInteractiveResizeEdge = null;
+      _backendResizeStartSize = null;
+      _backendResizeAccumDelta = Offset.zero;
+      _cancelBackendResizeDispatchTimer();
+      _pendingBackendResizeRequest = null;
+      _rawLeft = _rawTop = _rawRight = _rawBottom = null;
+      _dragRawLeft = _dragRawTop = null;
+      return;
+    }
     if (event is PointerDownEvent) {
       final manager = WindowManager.of(context);
       final windowRect =
@@ -402,6 +417,10 @@ class _WindowState extends State<Window> {
   }
 
   void _flushBackendResizeRequest() {
+    if (widget.entry.fullscreen) {
+      _pendingBackendResizeRequest = null;
+      return;
+    }
     if (_backendResizeRequestInFlight) {
       return;
     }
@@ -532,8 +551,10 @@ class _WindowState extends State<Window> {
         final manager = WindowManager.of(context);
         final windowRect =
             manager?.targetRectForWindow(entry) ?? entry.windowRect;
-        final docked = entry.maximized || entry.windowDock != WindowDock.normal;
-        final isDecorated = entry.chromeMode == WindowChromeMode.decorated;
+        final docked = entry.fullscreen ||
+            entry.maximized ||
+            entry.windowDock != WindowDock.normal;
+        final isDecorated = entry.usesToolbar;
         final isBackendWindow = entry.backendViewId != null;
         final isBackendDecorated = isBackendWindow && isDecorated;
         final showResizeHandles =
@@ -638,25 +659,26 @@ class _WindowState extends State<Window> {
           ),
         );
 
-        final contentPositioned = (isBackendWindow && !isDecorated)
-            ? Positioned(
-                left: alignedWindowRect.left,
-                top: alignedWindowRect.top,
-                child: windowContentChild,
-              )
-            : isBackendDecorated
+        final contentPositioned =
+            (isBackendWindow && !isDecorated && !entry.fullscreen)
                 ? Positioned(
                     left: alignedWindowRect.left,
                     top: alignedWindowRect.top,
-                    child: SizedBox(
-                      width: alignedWindowRect.width,
-                      child: windowContentChild,
-                    ),
-                  )
-                : Positioned.fromRect(
-                    rect: alignedWindowRect,
                     child: windowContentChild,
-                  );
+                  )
+                : isBackendDecorated
+                    ? Positioned(
+                        left: alignedWindowRect.left,
+                        top: alignedWindowRect.top,
+                        child: SizedBox(
+                          width: alignedWindowRect.width,
+                          child: windowContentChild,
+                        ),
+                      )
+                    : Positioned.fromRect(
+                        rect: alignedWindowRect,
+                        child: windowContentChild,
+                      );
         final handleBaseRect = isBackendDecorated
             ? Rect.fromLTWH(
                 alignedWindowRect.left,
@@ -702,6 +724,7 @@ class _WindowState extends State<Window> {
     bool isFocused = false,
     required Widget child,
   }) {
+    if (widget.entry.fullscreen) return ClipRect(child: child);
     // SSD windows always use the same container type, avoiding gesture breaks
     // when toggling docked/maximized states.
     final theme = Theme.of(context);
@@ -771,6 +794,7 @@ class _WindowState extends State<Window> {
   }
 
   void _onTitlebarDrag(DragUpdateDetails details) {
+    if (widget.entry.fullscreen) return;
     _lastDragGlobalPosition = details.globalPosition;
     _applyWindowDrag(details.delta, details.globalPosition);
   }
@@ -778,7 +802,9 @@ class _WindowState extends State<Window> {
   void _applyWindowDrag(Offset delta, Offset globalPosition) {
     final entry = widget.entry;
     final manager = WindowManager.of(context);
-    final docked = entry.maximized || entry.windowDock != WindowDock.normal;
+    final docked = entry.fullscreen ||
+        entry.maximized ||
+        entry.windowDock != WindowDock.normal;
     final restoreRect = entry.restoreRectAfterMaximize;
     final dockRestoreRect = entry.restoreRectAfterDock;
     final dragWindowSize = (entry.maximized && restoreRect != null)

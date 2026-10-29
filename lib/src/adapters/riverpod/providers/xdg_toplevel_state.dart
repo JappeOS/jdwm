@@ -31,6 +31,7 @@ abstract class XdgToplevelState with _$XdgToplevelState {
   const factory XdgToplevelState({
     required bool visible,
     required bool maximized,
+    @Default(false) bool fullscreen,
     required Key virtualKeyboardKey,
     required FocusNode focusNode,
     required Object interactiveMoveRequested,
@@ -75,14 +76,16 @@ class XdgToplevelStates extends _$XdgToplevelStates {
     ref.read(platformApiProvider.notifier).maximizeWindow(viewId, value);
   }
 
-  void setWindowState({required bool visible, required bool maximized}) {
+  void setWindowState(
+      {required bool visible, required bool maximized, bool? fullscreen}) {
     var snapshot = _toSnapshot(state);
     snapshot =
         ref.read(xdgToplevelControllerProvider).setVisible(snapshot, visible);
     snapshot = ref
         .read(xdgToplevelControllerProvider)
         .setMaximized(snapshot, maximized);
-    state = _fromSnapshot(snapshot);
+    state = _fromSnapshot(snapshot)
+        .copyWith(fullscreen: fullscreen ?? state.fullscreen);
   }
 
   void resize(int width, int height, {double? x, double? y}) {
@@ -135,6 +138,7 @@ class XdgToplevelStates extends _$XdgToplevelStates {
     return XdgToplevelSnapshot(
       visible: s.visible,
       maximized: s.maximized,
+      fullscreen: s.fullscreen,
       virtualKeyboardKey: s.virtualKeyboardKey,
       focusNode: s.focusNode,
       interactiveMoveRequested: s.interactiveMoveRequested,
@@ -149,6 +153,7 @@ class XdgToplevelStates extends _$XdgToplevelStates {
     return XdgToplevelState(
       visible: s.visible,
       maximized: s.maximized,
+      fullscreen: s.fullscreen,
       virtualKeyboardKey: s.virtualKeyboardKey,
       focusNode: s.focusNode,
       interactiveMoveRequested: s.interactiveMoveRequested,

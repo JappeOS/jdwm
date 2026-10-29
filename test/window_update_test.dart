@@ -11,6 +11,7 @@ import 'package:jdwm/src/window_manager.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/ui/common/xdg_toplevel_surface.dart';
 import 'package:visibility_detector/visibility_detector.dart';
+import 'package:jdwm/src/backend/platform_api.dart';
 
 WindowEntry entry() => WindowEntry(
       icon: const AssetImage('unused'),
@@ -19,6 +20,133 @@ WindowEntry entry() => WindowEntry(
     );
 
 void main() {
+  for (final protocol in ['xdg', 'xwayland']) {
+    testWidgets('$protocol fullscreen events resize to full monitor bounds',
+        (tester) async {
+      VisibilityDetectorController.instance.updateInterval = Duration.zero;
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          const MethodChannel('platform'), (call) async {
+        calls.add(call);
+        return null;
+      });
+      final key = GlobalKey<WindowManagerState>();
+      const bounds = Rect.fromLTWH(100, 0, 600, 500);
+      await tester.pumpWidget(shadcn.Theme(
+        data: const shadcn.ThemeData(),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: WindowManager(key: key, monitors: const [
+            MonitorConfig(
+                id: 'main', bounds: bounds, margin: EdgeInsets.all(30)),
+          ]),
+        ),
+      ));
+      Future<void> event(String method,
+          [Map<String, Object> data = const {}]) async {
+        final done = Completer<void>();
+        tester.binding.channelBuffers.push(
+            'platform',
+            const StandardMethodCodec().encodeMethodCall(MethodCall(method, {
+              'view_id': 1,
+              'protocol': protocol,
+              ...data,
+            })),
+            (_) => done.complete());
+        await done.future;
+        await tester.pump();
+        await tester.pump();
+      }
+
+      await event(
+          'commit_toplevel_surface', {'has_decoration': true, 'decoration': 2});
+      await event('map_toplevel_surface');
+      final manager = key.currentState!;
+      final window = manager.getAllWindows().single;
+      final container = riverpod.ProviderScope.containerOf(
+          tester.element(find.byType(XdgToplevelSurface)),
+          listen: false);
+      final api = container.read(platformApiProvider.notifier);
+      window.windowRect = const Rect.fromLTWH(150, 60, 200, 180);
+      window.backendContentInsetTop = 25;
+      final original = window.windowRect;
+      await event('set_toplevel_state',
+          {'visible': true, 'maximized': false, 'fullscreen': true});
+      expect(window.fullscreen, isTrue);
+      expect(manager.getManagedWindowsByFocus().single.fullscreen, isTrue);
+      expect(api.currentOpenWindows.single.fullscreen, isTrue);
+      expect(window.usesToolbar, isFalse);
+      expect(manager.targetRectForWindow(window), bounds);
+      final resize = calls.lastWhere((call) => call.method == 'resize_window');
+      expect(resize.arguments,
+          {'view_id': 1, 'x': 100.0, 'y': 0.0, 'width': 600, 'height': 500});
+      // Subsequent commits and legacy state payloads must not clear fullscreen.
+      await event('commit_toplevel_surface', {'width': 600, 'height': 500});
+      await event('set_toplevel_state', {'visible': true, 'maximized': false});
+      expect(window.fullscreen, isTrue);
+      await event('set_toplevel_state',
+          {'visible': true, 'maximized': false, 'fullscreen': false});
+      expect(window.fullscreen, isFalse);
+      expect(manager.getManagedWindowsByFocus().single.fullscreen, isFalse);
+      expect(api.currentOpenWindows.single.fullscreen, isFalse);
+      expect(window.usesToolbar, isTrue);
+      expect(window.windowRect, original);
+      await tester.pumpWidget(const SizedBox());
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('platform'), null);
+    });
+  }
+
+  testWidgets(
+      'fullscreen fills monitor bounds and restores window chrome and geometry',
+      (tester) async {
+    final key = GlobalKey<WindowManagerState>();
+    const full = Rect.fromLTWH(400, 0, 400, 500);
+    await tester.pumpWidget(shadcn.Theme(
+        data: const shadcn.ThemeData(),
+        child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: WindowManager(
+                key: key,
+                enableZenithBackend: false,
+                monitors: const [
+                  MonitorConfig(
+                      id: 'left', bounds: Rect.fromLTWH(0, 0, 400, 500)),
+                  MonitorConfig(
+                      id: 'right', bounds: full, margin: EdgeInsets.all(30)),
+                ]))));
+    final manager = key.currentState!;
+    final contentKey = GlobalKey();
+    final window = WindowEntry(
+        icon: const AssetImage('unused'),
+        content: SizedBox.expand(key: contentKey));
+    window.toolbar = const SizedBox(key: ValueKey('header'), height: 25);
+    manager.pushWindow(window, monitorId: 'right');
+    window.windowRect = const Rect.fromLTWH(430, 40, 200, 180);
+    final original = window.windowRect;
+    await tester.pump();
+    window.fullscreen = true;
+    await tester.pump();
+    expect(manager.targetRectForWindow(window), full);
+    expect(tester.getRect(find.byKey(contentKey)), full);
+    expect(find.byKey(const ValueKey('header')), findsNothing);
+    window.fullscreen =
+        true; // Duplicate requests cannot overwrite restoration.
+    window.fullscreen = false;
+    await tester.pump();
+    expect(window.windowRect, original);
+    expect(find.byKey(const ValueKey('header')), findsOneWidget);
+    window.maximized = true;
+    window.fullscreen = true;
+    await tester.pump();
+    expect(manager.targetRectForWindow(window), full);
+    window.fullscreen = false;
+    await tester.pump();
+    expect(window.maximized, isTrue);
+    expect(manager.targetRectForWindow(window), full.deflate(30));
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('backend focus activates once and restores after an overlay',
       (tester) async {
     VisibilityDetectorController.instance.updateInterval = Duration.zero;
