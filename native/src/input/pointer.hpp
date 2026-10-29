@@ -33,37 +33,43 @@ struct ZenithPointer {
 	wl_listener client_cursor_destroy{};
 
 private:
+	void apply_cursor();
+
 	bool visible = true;
+	bool input_visible = true;
+	bool client_hidden = false;
+	wlr_surface* client_surface = nullptr;
+	int32_t client_hotspot_x = 0, client_hotspot_y = 0;
 	bool forced_hidden = false;
 	bool manual_lock = false;
 	bool client_lock = false;
 	std::string cursor_name;
 
-	public:
-		bool is_visible() const {
-			return visible;
-		}
+public:
+	bool is_visible() const {
+		return visible;
+	}
 
-		bool is_locked() const {
-			return manual_lock || client_lock;
-		}
+	bool is_locked() const {
+		return manual_lock || client_lock;
+	}
 
-		bool is_forced_hidden() const {
-			return forced_hidden;
-		}
+	bool is_forced_hidden() const {
+		return forced_hidden;
+	}
 
-		const char* current_cursor_name() const {
-			return cursor_name.c_str();
-		}
+	const char* current_cursor_name() const {
+		return cursor_name.c_str();
+	}
 
-		void set_visible(bool value);
-		void set_forced_hidden(bool value);
-		void reveal_from_input_activity();
-		void set_cursor_name(const char* value);
-		void set_manual_locked(bool value);
-		void set_client_locked(bool value);
-		void restore_compositor_cursor();
-		void set_client_cursor(wlr_surface* surface, int32_t hotspot_x, int32_t hotspot_y);
+	void set_visible(bool value);
+	void set_forced_hidden(bool value);
+	void reveal_from_input_activity();
+	void set_cursor_name(const char* value);
+	void set_manual_locked(bool value);
+	void set_client_locked(bool value);
+	void restore_compositor_cursor();
+	void set_client_cursor(wlr_surface* surface, int32_t hotspot_x, int32_t hotspot_y);
 };
 
 /*

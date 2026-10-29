@@ -28,6 +28,28 @@ int main(int argc, char** argv) try {
 	wlr_pointer pointer{};
 	wlr_pointer_init(&pointer, nullptr, "shutdown-test-pointer");
 	server_new_input(&server->new_input, &pointer.base);
+	// Exercise the real native cursor implementation, including independent
+	// client/server hides and motion/name updates while the client hides it.
+	for (bool server_hidden : {false, true}) {
+		server->pointer->set_forced_hidden(server_hidden);
+		server->pointer->set_client_cursor(nullptr, 0, 0);
+		assert(!server->pointer->is_visible());
+		server->pointer->reveal_from_input_activity();
+		server->pointer->set_cursor_name("left_ptr");
+		assert(!server->pointer->is_visible());
+		server->pointer->restore_compositor_cursor();
+		assert(server->pointer->is_visible() == !server_hidden);
+	}
+	server->pointer->set_client_cursor(nullptr, 0, 0);
+	server->pointer->set_forced_hidden(false);
+	assert(!server->pointer->is_visible());
+	server->pointer->restore_compositor_cursor();
+	assert(server->pointer->is_visible());
+	server->pointer->set_visible(false); // Touch hiding is independent as well.
+	server->pointer->restore_compositor_cursor();
+	assert(!server->pointer->is_visible());
+	server->pointer->reveal_from_input_activity();
+	assert(server->pointer->is_visible());
 	// Exercise hot-unplug independently of final teardown.
 	wlr_touch unplugged{};
 	wlr_touch_init(&unplugged, nullptr, "shutdown-test-unplugged-touch");

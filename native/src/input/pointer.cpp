@@ -51,95 +51,45 @@ static bool has_any_output(ZenithServer* server) {
 	return server->output != nullptr || !server->outputs.empty();
 }
 
-void ZenithPointer::set_visible(bool value) {
-	if (visible == value) {
-		return;
-	}
-	visible = value;
+void ZenithPointer::apply_cursor() {
+	visible = input_visible && !forced_hidden && !client_hidden;
+	// Reattach after wlroots' listener so surface destruction restores the
+	// compositor cursor after wlroots clears the old client image.
 	wl_list_remove(&client_cursor_destroy.link);
 	wl_list_init(&client_cursor_destroy.link);
-	if (zenith_cursor_debug_enabled()) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:cursor set_visible=%d forced_hidden=%d cursor=%s",
-			visible ? 1 : 0,
-			forced_hidden ? 1 : 0,
-			cursor_name.c_str()
-		);
-	}
-	if (visible) {
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
-	} else {
+	if (!visible) {
 		wlr_cursor_set_surface(cursor, nullptr, 0, 0);
+	} else if (client_surface) {
+		wlr_cursor_set_surface(cursor, client_surface, client_hotspot_x, client_hotspot_y);
+	} else {
+		wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
 	}
-
-	// Software cursors are composited during output frames.
+	// Retain lifetime tracking even while the compositor hides a client image.
+	if (client_surface) wl_signal_add(&client_surface->events.destroy, &client_cursor_destroy);
 	schedule_cursor_frame(server);
 }
 
+void ZenithPointer::set_visible(bool value) {
+	if (input_visible == value) return;
+	input_visible = value;
+	apply_cursor();
+}
+
 void ZenithPointer::set_forced_hidden(bool value) {
-	if (forced_hidden == value) {
-		return;
-	}
+	if (forced_hidden == value) return;
 	forced_hidden = value;
-	if (zenith_cursor_debug_enabled()) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:cursor set_forced_hidden=%d visible_before=%d",
-			forced_hidden ? 1 : 0,
-			visible ? 1 : 0
-		);
-	}
-	set_visible(!forced_hidden);
+	apply_cursor();
 }
 
 void ZenithPointer::reveal_from_input_activity() {
-	if (forced_hidden) {
-		if (zenith_cursor_debug_enabled()) {
-			wlr_log(WLR_INFO, "zenith:cursor reveal_from_input_activity suppressed (forced hidden)");
-		}
-		return;
-	}
+	// Motion only cancels touch-induced hiding, not the client's null cursor
+	// request or the compositor's explicit visibility override.
 	set_visible(true);
 }
 
 void ZenithPointer::set_cursor_name(const char* value) {
-	wl_list_remove(&client_cursor_destroy.link);
-	wl_list_init(&client_cursor_destroy.link);
-	const char* next = (value != nullptr && value[0] != '\0') ? value : "left_ptr";
-	if (cursor_name == next) {
-		// Cursor source may currently be a client-provided surface. Re-apply
-		// compositor cursor image even if the logical name is unchanged.
-		if (zenith_cursor_debug_enabled()) {
-			wlr_log(
-				WLR_INFO,
-				"zenith:cursor set_cursor_name reapply=%s visible=%d forced_hidden=%d",
-				cursor_name.c_str(),
-				visible ? 1 : 0,
-				forced_hidden ? 1 : 0
-			);
-		}
-		if (visible) {
-			wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
-			schedule_cursor_frame(server);
-		}
-		return;
-	}
-	if (zenith_cursor_debug_enabled()) {
-		wlr_log(
-			WLR_INFO,
-			"zenith:cursor set_cursor_name=%s visible=%d forced_hidden=%d",
-			next,
-			visible ? 1 : 0,
-			forced_hidden ? 1 : 0
-		);
-	}
-	cursor_name = next;
-	if (!visible) {
-		return;
-	}
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, cursor_name.c_str());
-	schedule_cursor_frame(server);
+	cursor_name = value && value[0] ? value : "left_ptr";
+	apply_cursor();
 }
 
 void ZenithPointer::set_manual_locked(bool value) {
@@ -157,20 +107,18 @@ void ZenithPointer::set_client_locked(bool value) {
 }
 
 void ZenithPointer::restore_compositor_cursor() {
-	// Flutter may already have selected a resize cursor before the deferred
-	// pointer_exit arrives. Restore that selection without resetting its name.
-	set_cursor_name(cursor_name.c_str());
+	client_hidden = false;
+	client_surface = nullptr;
+	apply_cursor();
 }
 
 void ZenithPointer::set_client_cursor(wlr_surface* surface, int32_t hotspot_x, int32_t hotspot_y) {
-	wl_list_remove(&client_cursor_destroy.link);
-	wl_list_init(&client_cursor_destroy.link);
-	wlr_cursor_set_surface(cursor, surface, hotspot_x, hotspot_y);
-	if (surface != nullptr) {
-		// Register after wlroots: its destroy handler clears the image first.
-		// Our handler then restores it, even if Flutter's cursor kind is unchanged.
-		wl_signal_add(&surface->events.destroy, &client_cursor_destroy);
-	}
+	// A null wl_pointer.set_cursor surface is an explicit hide request.
+	client_hidden = surface == nullptr;
+	client_surface = surface;
+	client_hotspot_x = hotspot_x;
+	client_hotspot_y = hotspot_y;
+	apply_cursor();
 }
 
 ZenithPointer::ZenithPointer(ZenithServer* server)
@@ -183,7 +131,7 @@ ZenithPointer::ZenithPointer(ZenithServer* server)
 	pointer_focus_change.notify = [](wl_listener* listener, void* data) {
 		ZenithPointer* pointer = wl_container_of(listener, pointer, pointer_focus_change);
 		auto* event = static_cast<wlr_seat_pointer_focus_change_event*>(data);
-		if (event->new_surface == nullptr) {
+		if (event->new_surface != event->old_surface) {
 			pointer->restore_compositor_cursor();
 		}
 	};

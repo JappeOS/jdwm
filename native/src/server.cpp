@@ -850,7 +850,7 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 
 	auto* event = static_cast<wlr_seat_pointer_request_set_cursor_event*>(data);
 	wlr_seat_client* focused_client = server->seat->pointer_state.focused_client;
-	const bool allowed = focused_client == event->seat_client;
+	const bool allowed = focused_client != nullptr && focused_client == event->seat_client;
 	if (zenith_xwayland_input_debug_enabled()) {
 		wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
 		auto* focused_xwayland = focused_surface != nullptr
@@ -888,29 +888,11 @@ void server_seat_request_cursor(wl_listener* listener, void* data) {
 		 * provided surface as the cursor image. It will set the hardware cursor
 		 * on the output that it's currently on and continue to do so as the
 		 * cursor moves between outputs. */
-		if (server->pointer != nullptr && server->pointer->is_visible()) {
-			if (event->surface != nullptr) {
-				if (event->surface->mapped) {
-					server->pointer->set_client_cursor(
-						event->surface,
-						event->hotspot_x,
-						event->hotspot_y
-					);
-				} else {
-					// Ignore stale cursor surfaces from unmapped windows.
-					if (zenith_cursor_debug_enabled()) {
-						wlr_log(WLR_INFO, "zenith:cursor request_set_cursor ignored unmapped surface");
-					}
-					server->pointer->restore_compositor_cursor();
-				}
-			} else {
-				// Some clients may request a null cursor surface during teardown.
-				// Keep compositor cursor visible unless explicitly hidden by JDWM.
-				if (zenith_cursor_debug_enabled()) {
-					wlr_log(WLR_INFO, "zenith:cursor request_set_cursor null surface -> restore compositor");
-				}
-				server->pointer->restore_compositor_cursor();
-			}
+		if (server->pointer != nullptr) {
+			// Accept hidden-state changes too. The pointer combines client and
+			// server visibility and remembers the image while either hides it.
+			// Cursor surfaces may be attached before their first buffer commit.
+			server->pointer->set_client_cursor(event->surface, event->hotspot_x, event->hotspot_y);
 			// If this is a software cursor, it becomes visible on the next rendered frame.
 			server->output_manager->schedule_cursor_frame(
 				server->pointer->cursor->x, server->pointer->cursor->y);
