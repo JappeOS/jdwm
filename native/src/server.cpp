@@ -810,13 +810,14 @@ void server_new_input(wl_listener* listener, void* data) {
 				server->pointer = std::make_unique<ZenithPointer>(server);
 			}
 
-			bool is_touchpad = wlr_input_device_is_libinput(wlr_device);
-			if (is_touchpad) {
+			if (wlr_input_device_is_libinput(wlr_device)) {
 				// Enable tapping by default on all touchpads.
 				libinput_device* device = wlr_libinput_get_device_handle(wlr_device);
 				libinput_device_config_tap_set_enabled(device, LIBINPUT_CONFIG_TAP_ENABLED);
 				libinput_device_config_tap_set_drag_enabled(device, LIBINPUT_CONFIG_DRAG_ENABLED);
-				libinput_device_config_scroll_set_natural_scroll_enabled(device, true);
+				// Use conventional scrolling for both clients and the Flutter UI.
+				// This branch includes mice as well as touchpads.
+				libinput_device_config_scroll_set_natural_scroll_enabled(device, false);
 				libinput_device_config_dwt_set_enabled(device, LIBINPUT_CONFIG_DWT_ENABLED);
 			}
 
