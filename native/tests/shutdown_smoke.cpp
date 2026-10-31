@@ -2,6 +2,7 @@
 // animated Flutter bundle (data/flutter_assets, data/icudtl.dat, lib/libapp.so).
 // Run with WLR_BACKENDS=headless and send SIGINT/SIGTERM, or pass "shortcut".
 #include "server.hpp"
+#include "output/zenith_output_manager.hpp"
 #include <cassert>
 #include <cstring>
 #include <cstdio>
@@ -19,6 +20,29 @@ int main(int argc, char** argv) try {
 	sigset_t original_mask;
 	pthread_sigmask(SIG_SETMASK, nullptr, &original_mask);
 	auto* server = ZenithServer::instance();
+	if (argc > 1 && std::strcmp(argv[1], "output-management") == 0) {
+		// Test-only control channel for desktop blank/wake, independent of
+		// output configuration clients and without synthesizing pointer input.
+		wl_event_loop_add_signal(wl_display_get_event_loop(server->display), SIGUSR1,
+			[](int, void* data) {
+				static bool powered = true;
+				powered = !powered;
+				auto* server = static_cast<ZenithServer*>(data);
+				const auto before = server->output_manager->configuration();
+				server->output_manager->set_display_enabled(powered);
+				const auto after = server->output_manager->configuration();
+				assert(before.size() == after.size());
+				for (size_t i = 0; i < before.size(); ++i) {
+					assert(before[i].enabled == after[i].enabled);
+					assert(before[i].width == after[i].width && before[i].height == after[i].height);
+					assert(before[i].refresh == after[i].refresh && before[i].scale == after[i].scale);
+					assert(before[i].x == after[i].x && before[i].y == after[i].y);
+					assert(after[i].output->enabled == (after[i].enabled && powered));
+				}
+				wlr_log(WLR_INFO, "output-test: power=%d", powered);
+				return 0;
+			}, server);
+	}
 	wlr_keyboard keyboard{};
 	wlr_keyboard_init(&keyboard, nullptr, "shutdown-test-keyboard");
 	server_new_input(&server->new_input, &keyboard.base);

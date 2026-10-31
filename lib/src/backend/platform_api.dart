@@ -78,12 +78,19 @@ class WindowUnmappedStream extends _$WindowUnmappedStream {
 
 @Riverpod(keepAlive: true)
 class BackendMonitorList extends _$BackendMonitorList {
+  bool hasReceivedLayout = false;
+
+  @override
+  bool updateShouldNotify(
+      IList<BackendMonitor> previous, IList<BackendMonitor> next) => true;
+
   @override
   IList<BackendMonitor> build() {
     return IList();
   }
 
   void setAll(List<BackendMonitor> monitors) {
+    hasReceivedLayout = true;
     state = monitors.lock;
   }
 }

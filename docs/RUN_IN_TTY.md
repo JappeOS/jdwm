@@ -5,7 +5,6 @@ Make sure you're launching from a real TTY (not from inside another Wayland/X11 
 ```bash
 unset WAYLAND_DISPLAY DISPLAY
 export XDG_SESSION_TYPE=tty
-export ZENITH_MULTI_MONITOR_MODE=extend
 ```
 
 Recommended for hybrid iGPU+dGPU laptops (internal panel on iGPU, external HDMI/DP on dGPU):

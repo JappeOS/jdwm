@@ -15,8 +15,8 @@ import tempfile
 import time
 
 
-def run_case(runner, client_exe, logs, mode, action):
-    path = logs / f"{mode}-{action}.log"
+def run_case(runner, client_exe, logs, output_count, action):
+    path = logs / f"{output_count}-outputs-{action}.log"
     with tempfile.TemporaryDirectory(prefix="jdwm-shutdown-") as runtime:
         env = dict(
             os.environ,
@@ -24,8 +24,7 @@ def run_case(runner, client_exe, logs, mode, action):
             WLR_BACKENDS="headless",
             WLR_RENDERER="pixman" if action == "startup-failure" else "gles2",
             WLR_RENDERER_ALLOW_SOFTWARE="1",
-            WLR_HEADLESS_OUTPUTS="2",
-            ZENITH_MULTI_MONITOR_MODE=mode,
+            WLR_HEADLESS_OUTPUTS=str(output_count),
             ZENITH_TRACE_FRAME_TIMING="1",
         )
         args = [str(runner)]
@@ -62,7 +61,7 @@ def run_case(runner, client_exe, logs, mode, action):
                     assert content.count("xdg_surface map,") == 3, f"clients not mapped: {path}"
                     for client in clients:
                         assert client.wait(timeout=2) == 0, f"client failed: {path}"
-                print(f"PASS {mode} {action}", flush=True)
+                print(f"PASS {output_count} outputs {action}", flush=True)
             finally:
                 for child in [*clients, process]:
                     if child.poll() is None:
@@ -76,7 +75,7 @@ if __name__ == "__main__":
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     runner, client, logs = (Path(arg).resolve() for arg in sys.argv[1:])
     logs.mkdir(parents=True, exist_ok=True)
-    for mode in ("off", "extend"):
+    for output_count in (1, 2):
         for action in ("shortcut", "sigint", "sigterm", "both", "early"):
-            run_case(runner, client, logs, mode, action)
-    run_case(runner, client, logs, "off", "startup-failure")
+            run_case(runner, client, logs, output_count, action)
+    run_case(runner, client, logs, 1, "startup-failure")

@@ -62,8 +62,8 @@ void touch_down_handle(wl_listener* listener, void* data) {
 	wlr_box box_val;
 	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
 	wlr_box* box = &box_val;
-	e.x = event->x * box->width;
-	e.y = event->y * box->height;
+	e.x = event->x * box->width * server->display_scale;
+	e.y = event->y * box->height * server->display_scale;
 
 	touch_device->last_touch_coordinates[event->touch_id] = std::pair(event->x, event->y);
 
@@ -87,8 +87,8 @@ void touch_motion_handle(wl_listener* listener, void* data) {
 	wlr_box box_val;
 	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
 	wlr_box* box = &box_val;
-	e.x = event->x * box->width;
-	e.y = event->y * box->height;
+	e.x = event->x * box->width * server->display_scale;
+	e.y = event->y * box->height * server->display_scale;
 
 	touch_device->last_touch_coordinates[event->touch_id] = std::pair(event->x, event->y);
 
@@ -112,8 +112,8 @@ void touch_up_handle(wl_listener* listener, void* data) {
 	wlr_box box_val;
 	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
 	wlr_box* box = &box_val;
-	e.x = last_coordinates.first * box->width;
-	e.y = last_coordinates.second * box->height;
+	e.x = last_coordinates.first * box->width * server->display_scale;
+	e.y = last_coordinates.second * box->height * server->display_scale;
 
 	e.timestamp = current_time_microseconds();
 	e.device_kind = kFlutterPointerDeviceKindTouch;
@@ -136,8 +136,8 @@ void touch_cancel_handle(wl_listener* listener, void* data) {
 	wlr_box box_val;
 	wlr_output_layout_get_box(server->output_layout, nullptr, &box_val);
 	wlr_box* box = &box_val;
-	e.x = last_coordinates.first * box->width;
-	e.y = last_coordinates.second * box->height;
+	e.x = last_coordinates.first * box->width * server->display_scale;
+	e.y = last_coordinates.second * box->height * server->display_scale;
 
 	e.timestamp = current_time_microseconds();
 	e.device_kind = kFlutterPointerDeviceKindTouch;

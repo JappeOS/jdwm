@@ -322,7 +322,7 @@ final class BackendMonitorListProvider
 }
 
 String _$backendMonitorListHash() =>
-    r'67c497538be45c756099561fd3eb27435521e8f8';
+    r'05eb3cbd21a0316214cf5630c20a78804f0454e2';
 
 abstract class _$BackendMonitorList extends $Notifier<IList<BackendMonitor>> {
   IList<BackendMonitor> build();

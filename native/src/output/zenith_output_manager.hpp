@@ -3,12 +3,15 @@
 #include <memory>
 #include <vector>
 #include <tuple>
-#include "multimonitor/multi_monitor_mode.hpp"
+#include "output_configuration.hpp"
+#include <unordered_map>
 #include "swap_chain.hpp"
 #include "third_party/embedder.h"
 
 struct ZenithServer;
 struct ZenithOutput;
+struct wlr_output_state;
+
 extern "C" {
 struct wlr_gles2_buffer;
 }
@@ -23,17 +26,17 @@ enum class VsyncDriverMode {
 
 class ZenithOutputManager {
 public:
-	ZenithOutputManager(ZenithServer* server, multimonitor::MultiMonitorMode mode);
-
-	multimonitor::MultiMonitorMode mode() const;
-	bool is_multi_output_enabled() const;
+	explicit ZenithOutputManager(ZenithServer* server);
+	OutputConfiguration configuration() const;
+	bool configure(const OutputConfiguration& proposal, bool test_only) const;
+	void reconcile() const;
+	void layout_to_flutter(double& x, double& y) const;
 
 	void handle_output_added(const std::shared_ptr<ZenithOutput>& output) const;
 	void handle_output_removed(ZenithOutput* removed_output) const;
-	void handle_output_state_changed(ZenithOutput* changed_output) const;
+	bool request_state(ZenithOutput* output, const wlr_output_state& state) const;
 
 	ZenithOutput* output_for_cursor(double x, double y) const;
-	float pointer_scale_at(double x, double y) const;
 	void schedule_cursor_frame(double x, double y) const;
 	void schedule_compositor_frame() const;
 	void set_display_enabled(bool enable) const;
@@ -61,23 +64,27 @@ private:
 	};
 
 	mutable std::shared_ptr<SwapChain<wlr_gles2_buffer>> published_target_;
+	mutable std::shared_ptr<SwapChain<wlr_gles2_buffer>> prepared_target_;
 	ZenithServer* server_ = nullptr;
-	multimonitor::MultiMonitorMode mode_ = multimonitor::MultiMonitorMode::Off;
+	mutable std::unordered_map<wlr_output*, OutputSettings> configured_;
+	mutable bool applying_ = false;
+	mutable bool display_enabled_ = true;
+	OutputSettings capture_output(ZenithOutput* output) const;
 	VsyncDriverMode vsync_mode_ = VsyncDriverMode::RenderOutput;
 	mutable ZenithOutput* active_output_ = nullptr;
 	mutable ZenithOutput* last_cursor_output_ = nullptr;
-	mutable ZenithOutput* extend_composition_format_output_ = nullptr;
-	mutable std::shared_ptr<SwapChain<wlr_gles2_buffer>> extend_composition_swap_chain_ = nullptr;
+	mutable ZenithOutput* composition_format_output_ = nullptr;
+	mutable std::shared_ptr<SwapChain<wlr_gles2_buffer>> composition_swap_chain_ = nullptr;
 	mutable std::vector<OutputMapping> composition_mapping_;
-	mutable int extend_composition_width_ = 0;
-	mutable int extend_composition_height_ = 0;
+	mutable int composition_width_ = 0;
+	mutable int composition_height_ = 0;
 
-	static void send_single_output_metrics(ZenithServer* server, ZenithOutput* output);
 	static void send_virtual_desktop_metrics(ZenithServer* server);
 	static void add_output_to_layout(ZenithServer* server, ZenithOutput* output);
 	static void update_scene_node_positions(ZenithServer* server);
 	void schedule_output_frame(ZenithOutput* output, bool force_immediate) const;
 	void ensure_composition_target() const;
+	void clear_composition_target() const;
 };
 
 } // namespace zenith

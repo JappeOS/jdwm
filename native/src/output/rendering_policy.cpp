@@ -40,14 +40,8 @@ size_t desired_swapchain_buffer_count(const ZenithServer* server) {
 	if (override_value != 0) {
 		return override_value;
 	}
-	if (server != nullptr && server->output_manager != nullptr &&
-	    server->output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
-		// Extended desktop can be presented by multiple outputs with different
-		// refresh rates. Keep a deeper history to avoid reusing a buffer that is
-		// still being scanned out on another output/GPU.
-		return 8;
-	}
-	return 4;
+	// Multiple outputs can retain frames concurrently, including across GPUs.
+	return 8;
 }
 
 bool force_software_cursor() {

@@ -48,6 +48,7 @@ struct wlr_xwayland_surface;
 
 namespace zenith {
 class ZenithOutputManager;
+class OutputManagement;
 }
 
 struct ZenithServer {
@@ -91,6 +92,7 @@ public:
 	std::vector<std::shared_ptr<ZenithOutput>> outputs = {};
 	std::shared_ptr<ZenithOutput> output = {}; // We support a single output at the moment.
 	std::unique_ptr<zenith::ZenithOutputManager> output_manager{};
+	std::unique_ptr<zenith::OutputManagement> output_management{};
 	std::atomic<int> composition_source_height_cache{0};
 
 	// The maximum size a window can be, which is basically the size of the screen minus the status bar and possibly

@@ -192,33 +192,8 @@ void remap_global_configure_coords(ZenithServer* server,
 	if (output_origin_y != nullptr) {
 		*output_origin_y = 0;
 	}
-	if (server == nullptr || server->output_layout == nullptr || server->output_manager == nullptr) {
-		return;
-	}
-	if (server->output_manager->mode() != multimonitor::MultiMonitorMode::Extend) {
-		return;
-	}
-	struct wlr_output* output = wlr_output_layout_output_at(
-		server->output_layout,
-		(double) global_x,
-		(double) global_y
-	);
-	if (output == nullptr) {
-		return;
-	}
-	struct wlr_box box = {};
-	wlr_output_layout_get_box(server->output_layout, output, &box);
-	*xwayland_x = global_x - box.x;
-	*xwayland_y = global_y - box.y;
-	if (output_origin_x != nullptr) {
-		*output_origin_x = box.x;
-	}
-	if (output_origin_y != nullptr) {
-		*output_origin_y = box.y;
-	}
-	if (remapped != nullptr) {
-		*remapped = box.x != 0 || box.y != 0;
-	}
+	// Flutter and Xwayland share normalized virtual-desktop coordinates.
+
 }
 
 bool configure_xwayland_toplevel(ZenithServer* server,

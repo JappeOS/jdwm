@@ -40,7 +40,7 @@ The fixture consists of:
 - `shutdown_client.c`: a small mapped XDG/SHM client kept connected through exit.
 - `shutdown_smoke.py`: launches two headless outputs on a private Wayland socket,
   checks active Flutter rendering and three mapped clients, and tests keyboard,
-  SIGINT, SIGTERM and combined-signal exits in Off and Extend modes. It also
+  SIGINT, SIGTERM and combined-signal exits with one and two outputs. It also
   checks early exit and rejected-renderer startup cleanup: 11 cases total.
 
 Build the client:

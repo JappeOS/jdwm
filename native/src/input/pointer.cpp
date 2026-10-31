@@ -23,32 +23,8 @@ static void schedule_cursor_frame(ZenithServer* server) {
 	}
 }
 
-static float pointer_scale(ZenithServer* server, ZenithPointer* pointer) {
-	if (server == nullptr) {
-		return 1.0f;
-	}
-	const float scale = server->display_scale > 0.0f ? server->display_scale : 1.0f;
-	if (pointer != nullptr && server->output_manager != nullptr) {
-		static bool logged_mismatch = false;
-		if (!logged_mismatch) {
-			const float output_scale =
-				server->output_manager->pointer_scale_at(pointer->cursor->x, pointer->cursor->y);
-			if (std::fabs(output_scale - scale) > 0.001f) {
-				logged_mismatch = true;
-				wlr_log(
-					WLR_INFO,
-					"zenith:pointer-scale using display_scale=%.3f while output_scale_at_cursor=%.3f",
-					scale,
-					output_scale
-				);
-			}
-		}
-	}
-	return scale;
-}
-
 static bool has_any_output(ZenithServer* server) {
-	return server->output != nullptr || !server->outputs.empty();
+	return server->output_manager->current_render_output() != nullptr;
 }
 
 void ZenithPointer::apply_cursor() {
@@ -248,9 +224,9 @@ void server_cursor_motion(wl_listener* listener, void* data) {
 	e.struct_size = sizeof(FlutterPointerEvent);
 	e.phase = pointer->mouse_button_tracker.are_any_buttons_pressed() ? kMove : kHover;
 	e.timestamp = current_time_microseconds();
-	const float scale = pointer_scale(server, pointer);
-	e.x = pointer->cursor->x * scale;
-	e.y = pointer->cursor->y * scale;
+	e.x = pointer->cursor->x;
+	e.y = pointer->cursor->y;
+	server->output_manager->layout_to_flutter(e.x, e.y);
 	e.device_kind = kFlutterPointerDeviceKindMouse;
 	e.buttons = pointer->mouse_button_tracker.get_flutter_mouse_state();
 
@@ -281,9 +257,9 @@ void server_cursor_motion_absolute(wl_listener* listener, void* data) {
 	e.timestamp = current_time_microseconds();
 
 	// Map from [0, 1] to [output_width, output_height].
-	const float scale = pointer_scale(server, pointer);
-	e.x = pointer->cursor->x * scale;
-	e.y = pointer->cursor->y * scale;
+	e.x = pointer->cursor->x;
+	e.y = pointer->cursor->y;
+	server->output_manager->layout_to_flutter(e.x, e.y);
 	e.device_kind = kFlutterPointerDeviceKindMouse;
 	e.buttons = pointer->mouse_button_tracker.get_flutter_mouse_state();
 
@@ -316,9 +292,9 @@ void server_cursor_button(wl_listener* listener, void* data) {
 	schedule_cursor_frame(server);
 
 	e.timestamp = current_time_microseconds();
-	const float scale = pointer_scale(server, pointer);
-	e.x = pointer->cursor->x * scale;
-	e.y = pointer->cursor->y * scale;
+	e.x = pointer->cursor->x;
+	e.y = pointer->cursor->y;
+	server->output_manager->layout_to_flutter(e.x, e.y);
 	e.device_kind = kFlutterPointerDeviceKindMouse;
 	e.buttons = pointer->mouse_button_tracker.get_flutter_mouse_state();
 
@@ -349,9 +325,9 @@ void server_cursor_axis(wl_listener* listener, void* data) {
 	e.struct_size = sizeof(FlutterPointerEvent);
 	e.phase = are_any_buttons_pressed ? kMove : kDown;
 	e.timestamp = current_time_microseconds();
-	const float scale = pointer_scale(server, pointer);
-	e.x = pointer->cursor->x * scale;
-	e.y = pointer->cursor->y * scale;
+	e.x = pointer->cursor->x;
+	e.y = pointer->cursor->y;
+	server->output_manager->layout_to_flutter(e.x, e.y);
 	e.device_kind = kFlutterPointerDeviceKindMouse;
 	e.buttons = pointer->mouse_button_tracker.get_flutter_mouse_state();
 	e.signal_kind = kFlutterPointerSignalKindScroll;

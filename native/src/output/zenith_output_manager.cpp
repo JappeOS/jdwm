@@ -162,7 +162,7 @@ static bool output_exists(ZenithServer* server, ZenithOutput* output) {
 		return false;
 	}
 	for (const auto& candidate : server->outputs) {
-		if (candidate.get() == output) {
+		if (candidate.get() == output && candidate->wlr_output->enabled) {
 			return true;
 		}
 	}
@@ -182,7 +182,7 @@ static ZenithOutput* pick_highest_refresh_output(ZenithServer* server) {
 	ZenithOutput* best_output = nullptr;
 	int best_refresh = 0;
 	for (const auto& output : server->outputs) {
-		if (output == nullptr || output->wlr_output == nullptr) {
+		if (output == nullptr || output->wlr_output == nullptr || !output->wlr_output->enabled) {
 			continue;
 		}
 		int refresh = output->wlr_output->refresh;
@@ -198,8 +198,8 @@ static ZenithOutput* pick_highest_refresh_output(ZenithServer* server) {
 }
 
 ZenithOutputManager::ZenithOutputManager(
-	ZenithServer* server, multimonitor::MultiMonitorMode mode)
-	: server_(server), mode_(mode), vsync_mode_(parse_vsync_driver_mode_from_env()) {
+	ZenithServer* server)
+	: server_(server), vsync_mode_(parse_vsync_driver_mode_from_env()) {
 	wlr_log(
 		WLR_INFO,
 		"zenith: vsync driver mode=%s (ZENITH_VSYNC_OUTPUT)",
@@ -207,21 +207,16 @@ ZenithOutputManager::ZenithOutputManager(
 	);
 }
 
-multimonitor::MultiMonitorMode ZenithOutputManager::mode() const {
-	return mode_;
-}
-
-bool ZenithOutputManager::is_multi_output_enabled() const {
-	return mode_ != multimonitor::MultiMonitorMode::Off;
-}
-
 void ZenithOutputManager::refresh_xwayland_workareas() const {
 	update_xwayland_workareas_for_layout(server_);
 }
 
 void ZenithOutputManager::add_output_to_layout(ZenithServer* server, ZenithOutput* output) {
+	wlr_box extents{};
+	wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
+	const int right = extents.width ? extents.x + extents.width : 0;
 	wlr_output_layout_output* layout_output =
-		wlr_output_layout_add_auto(server->output_layout, output->wlr_output);
+		wlr_output_layout_add(server->output_layout, output->wlr_output, right, 0);
 	if (layout_output != nullptr && server->scene_output_layout != nullptr && output->scene_output != nullptr) {
 		wlr_scene_output_layout_add_output(server->scene_output_layout, layout_output, output->scene_output);
 	}
@@ -238,23 +233,37 @@ void ZenithOutputManager::update_scene_node_positions(ZenithServer* server) {
 	}
 }
 
-void ZenithOutputManager::ensure_composition_target() const {
-	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
-		return;
+void ZenithOutputManager::clear_composition_target() const {
+	for (const auto& output : server_->outputs) {
+		if (output->scene_buffer)
+			wlr_scene_buffer_set_buffer(output->scene_buffer, nullptr);
+		output->scene_slot.reset();
+		if (output->presented_slot)
+			output->presented_slot->release_presentation();
+		output->presented_slot.reset();
 	}
+
+	composition_mapping_.clear();
+	prepared_target_.reset();
+	composition_swap_chain_.reset();
+	publish_composition_target();
+	composition_format_output_ = nullptr;
+	composition_width_ = 0;
+	composition_height_ = 0;
+}
+
+void ZenithOutputManager::ensure_composition_target() const {
 	ZenithOutput* format_output = current_render_output();
 	if (format_output == nullptr || format_output->wlr_output == nullptr) {
-		extend_composition_swap_chain_.reset();
-		publish_composition_target();
-		extend_composition_format_output_ = nullptr;
-		extend_composition_width_ = 0;
-		extend_composition_height_ = 0;
+		clear_composition_target();
 		return;
 	}
 
 	int width = 0;
 	int height = 0;
 	get_layout_extents_or_output(server_, format_output, &width, &height);
+	width = int(std::ceil(width * double(server_->display_scale)));
+	height = int(std::ceil(height * double(server_->display_scale)));
 	if (width <= 0 || height <= 0) {
 		return;
 	}
@@ -271,12 +280,14 @@ void ZenithOutputManager::ensure_composition_target() const {
 			output->wlr_output->scale, output->wlr_output->transform, output->wlr_output->enabled});
 	}
 
-	const bool format_changed = extend_composition_format_output_ != format_output;
+	const bool format_changed = composition_format_output_ != format_output;
 	const bool size_changed =
-		extend_composition_width_ != width || extend_composition_height_ != height;
-	if (extend_composition_swap_chain_ == nullptr || format_changed || size_changed || mapping != composition_mapping_) {
-		auto new_swap_chain =
-			create_output_swap_chain(format_output->wlr_output, width, height);
+		composition_width_ != width || composition_height_ != height;
+	if (composition_swap_chain_ == nullptr || format_changed || size_changed || mapping != composition_mapping_) {
+		auto new_swap_chain = prepared_target_
+			? std::move(prepared_target_)
+			: create_output_swap_chain(format_output->wlr_output, width, height);
+
 		if (new_swap_chain == nullptr) {
 			wlr_log(
 				WLR_ERROR,
@@ -285,22 +296,32 @@ void ZenithOutputManager::ensure_composition_target() const {
 				width,
 				height
 			);
+			clear_composition_target();
 			return;
 		}
-		extend_composition_swap_chain_ = std::move(new_swap_chain);
+
+		composition_swap_chain_ = std::move(new_swap_chain);
 		publish_composition_target();
 		composition_mapping_ = std::move(mapping);
-		extend_composition_format_output_ = format_output;
-		extend_composition_width_ = width;
-		extend_composition_height_ = height;
+		composition_format_output_ = format_output;
+		composition_width_ = width;
+		composition_height_ = height;
+
 		for (const auto& output : server_->outputs) {
 			if (output == nullptr) {
 				continue;
 			}
+
 			if (output->presented_slot != nullptr) {
 				output->presented_slot->release_presentation();
 				output->presented_slot = nullptr;
 			}
+
+			if (output->scene_buffer)
+				wlr_scene_buffer_set_buffer(output->scene_buffer, nullptr);
+
+			output->scene_slot.reset();
+			output->scene_commit_pending = false;
 			output->last_scene_buffer = nullptr;
 			output->has_last_source_box = false;
 			output->last_dest_width = 0;
@@ -308,6 +329,7 @@ void ZenithOutputManager::ensure_composition_target() const {
 			output->last_presented_source_serial = 0;
 			output->last_frame_commit_ns = 0;
 		}
+
 		wlr_log(
 			WLR_INFO,
 			"zenith: extend composition target format_output='%s' size=%dx%d",
@@ -318,23 +340,6 @@ void ZenithOutputManager::ensure_composition_target() const {
 	}
 }
 
-void ZenithOutputManager::send_single_output_metrics(ZenithServer* server, ZenithOutput* output) {
-	if (server == nullptr || output == nullptr || output->wlr_output == nullptr) {
-		return;
-	}
-	server->output_manager->publish_composition_target();
-	server->composition_source_height_cache.store(output->wlr_output->height, std::memory_order_release);
-	if (server->embedder_state == nullptr) {
-		return;
-	}
-	FlutterWindowMetricsEvent window_metrics = {};
-	window_metrics.struct_size = sizeof(FlutterWindowMetricsEvent);
-	window_metrics.width = output->wlr_output->width;
-	window_metrics.height = output->wlr_output->height;
-	window_metrics.pixel_ratio = server->display_scale;
-	server->embedder_state->send_window_metrics(window_metrics);
-}
-
 void ZenithOutputManager::send_virtual_desktop_metrics(ZenithServer* server) {
 	if (server == nullptr || server->output_layout == nullptr) {
 		return;
@@ -343,15 +348,11 @@ void ZenithOutputManager::send_virtual_desktop_metrics(ZenithServer* server) {
 	struct wlr_box extents = {};
 	wlr_output_layout_get_box(server->output_layout, nullptr, &extents);
 
-	int width = extents.width;
-	int height = extents.height;
-	if (width <= 0 || height <= 0) {
-		if (server->output == nullptr || server->output->wlr_output == nullptr) {
-			return;
-		}
-		width = server->output->wlr_output->width;
-		height = server->output->wlr_output->height;
-	}
+	const int width = server->output_manager->composition_source_width();
+	const int height = server->output_manager->composition_source_height();
+	if (width <= 0 || height <= 0)
+		return;
+
 	server->composition_source_height_cache.store(height, std::memory_order_release);
 	if (server->embedder_state == nullptr) {
 		return;
@@ -366,168 +367,45 @@ void ZenithOutputManager::send_virtual_desktop_metrics(ZenithServer* server) {
 }
 
 void ZenithOutputManager::handle_output_added(const std::shared_ptr<ZenithOutput>& output) const {
-	if (output == nullptr) {
+	if (!output)
 		return;
-	}
 
-	if (active_output_ == nullptr) {
-		active_output_ = output.get();
-	}
-
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
+	if (output->wlr_output->enabled)
 		add_output_to_layout(server_, output.get());
-		update_scene_node_positions(server_);
-		if (server_->output == nullptr) {
-			server_->output = output;
-		}
-		ensure_composition_target();
-		send_virtual_desktop_metrics(server_);
-		update_xwayland_workareas_for_layout(server_);
-		struct wlr_box extents = {};
-		wlr_output_layout_get_box(server_->output_layout, nullptr, &extents);
-		wlr_log(WLR_INFO,
-			"zenith: multimonitor(extend) added output='%s' outputs=%zu layout=%dx%d@(%d,%d)",
-			output->wlr_output->name, server_->outputs.size(),
-			extents.width, extents.height, extents.x, extents.y);
-		schedule_compositor_frame();
-		if (server_->embedder_state != nullptr) {
-			server_->embedder_state->publish_monitor_layout();
-		}
-		return;
-	}
 
-	// Single-output behavior (off/last): keep newest output as active.
-	if (server_->outputs.size() >= 2) {
-		const auto& previous = server_->outputs[server_->outputs.size() - 2];
-		if (previous != nullptr) {
-			previous->disable();
-			wlr_output_layout_remove(server_->output_layout, previous->wlr_output);
-		}
-	}
-	
-	add_output_to_layout(server_, output.get());
-	server_->output = output;
-	send_single_output_metrics(server_, output.get());
-	update_xwayland_workareas_for_layout(server_);
-	if (mode_ == multimonitor::MultiMonitorMode::Last) {
-		wlr_log(WLR_INFO, "zenith: multimonitor(last) active output='%s' outputs=%zu",
-		        output->wlr_output->name, server_->outputs.size());
-	}
-	schedule_compositor_frame();
-	if (server_->embedder_state != nullptr) {
-		server_->embedder_state->publish_monitor_layout();
+	configured_[output->wlr_output] = capture_output(output.get());
+	if (!configure(configuration(), false)) {
+		wlr_output_state state;
+		wlr_output_state_init(&state);
+		state.allow_reconfiguration = true;
+		wlr_output_state_set_enabled(&state, false);
+		if (!wlr_output_commit_state(output->wlr_output, &state))
+			wlr_log(WLR_ERROR, "zenith: failed to disable unusable output '%s'", output->wlr_output->name);
+		wlr_output_state_finish(&state);
+		configured_[output->wlr_output] = capture_output(output.get());
+		reconcile();
 	}
 }
 
-void ZenithOutputManager::handle_output_removed(ZenithOutput* removed_output) const {
-	if (removed_output == nullptr) {
-		return;
-	}
-
-	if (server_->is_shutting_down()) {
-		wlr_output_layout_remove(server_->output_layout, removed_output->wlr_output);
-		if (server_->output.get() == removed_output)
-			server_->output.reset();
-		server_->outputs.erase(std::remove_if(server_->outputs.begin(), server_->outputs.end(),
-			[removed_output](const auto& output) { return output.get() == removed_output; }), server_->outputs.end());
-		return;
-	}
-
-	wlr_output_layout_remove(server_->output_layout, removed_output->wlr_output);
-
-	auto it = std::remove_if(server_->outputs.begin(), server_->outputs.end(),
-		[removed_output](const std::shared_ptr<ZenithOutput>& o) {
-			return o.get() == removed_output;
-		});
-	server_->outputs.erase(it, server_->outputs.end());
-
-	if (active_output_ == removed_output) {
-		active_output_ = server_->outputs.empty() ? nullptr : server_->outputs.front().get();
-	}
-	if (last_cursor_output_ == removed_output) {
+void ZenithOutputManager::handle_output_removed(ZenithOutput* removed) const {
+	configured_.erase(removed->wlr_output);
+	wlr_output_layout_remove(server_->output_layout, removed->wlr_output);
+	if (active_output_ == removed)
+		active_output_ = nullptr;
+	if (last_cursor_output_ == removed)
 		last_cursor_output_ = nullptr;
-	}
-	if (extend_composition_format_output_ == removed_output) {
-		extend_composition_format_output_ = nullptr;
-	}
+	if (composition_format_output_ == removed)
+		composition_format_output_ = nullptr;
+	if (server_->output.get() == removed)
+		server_->output.reset();
 
-	if (server_->outputs.empty()) {
-		server_->output = nullptr;
-		extend_composition_format_output_ = nullptr;
-		extend_composition_swap_chain_.reset();
-		publish_composition_target();
-		extend_composition_width_ = 0;
-		extend_composition_height_ = 0;
-		update_xwayland_workareas_for_layout(server_);
-		if (server_->embedder_state != nullptr) {
-			server_->embedder_state->publish_monitor_layout();
-		}
-		return;
-	}
-
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		if (server_->output != nullptr && server_->output->wlr_output == removed_output->wlr_output) {
-			server_->output = server_->outputs.front();
-		}
-		update_scene_node_positions(server_);
-		ensure_composition_target();
-		send_virtual_desktop_metrics(server_);
-		update_xwayland_workareas_for_layout(server_);
-		if (server_->embedder_state != nullptr) {
-			server_->embedder_state->publish_monitor_layout();
-		}
-		return;
-	}
-
-	// Single-output behavior (off/last)
-	const bool removed_active_output =
-		server_->output != nullptr && server_->output->wlr_output == removed_output->wlr_output;
-	if (!removed_active_output) {
-		return;
-	}
-	server_->output = server_->outputs.back();
-	if (server_->output == nullptr) {
-		return;
-	}
-	if (!server_->output->enable()) {
-		wlr_log(WLR_ERROR, "zenith: failed to enable fallback output '%s'", server_->output->wlr_output->name);
-		return;
-	}
-	add_output_to_layout(server_, server_->output.get());
-	send_single_output_metrics(server_, server_->output.get());
-	update_xwayland_workareas_for_layout(server_);
-	if (server_->embedder_state != nullptr) {
-		server_->embedder_state->publish_monitor_layout();
-	}
-}
-
-void ZenithOutputManager::handle_output_state_changed(ZenithOutput* changed_output) const {
-	if (changed_output == nullptr) {
-		return;
-	}
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		update_scene_node_positions(server_);
-		ensure_composition_target();
-		send_virtual_desktop_metrics(server_);
-		update_xwayland_workareas_for_layout(server_);
-		if (server_->embedder_state != nullptr) {
-			server_->embedder_state->publish_monitor_layout();
-		}
-		return;
-	}
-	if (server_->output != nullptr && server_->output->wlr_output == changed_output->wlr_output) {
-		send_single_output_metrics(server_, changed_output);
-		update_xwayland_workareas_for_layout(server_);
-		if (server_->embedder_state != nullptr) {
-			server_->embedder_state->publish_monitor_layout();
-		}
-	}
+	server_->outputs.erase(std::remove_if(server_->outputs.begin(), server_->outputs.end(),
+		[removed](const auto& item) { return item.get() == removed; }), server_->outputs.end());
+	if (!server_->is_shutting_down())
+		reconcile();
 }
 
 ZenithOutput* ZenithOutputManager::output_for_cursor(double x, double y) const {
-	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
-		return server_->output.get();
-	}
 	if (server_->output_layout == nullptr) {
 		return server_->output.get();
 	}
@@ -536,143 +414,98 @@ ZenithOutput* ZenithOutputManager::output_for_cursor(double x, double y) const {
 	return output != nullptr ? output : server_->output.get();
 }
 
-float ZenithOutputManager::pointer_scale_at(double x, double y) const {
-	ZenithOutput* output = output_for_cursor(x, y);
-	if (output == nullptr || output->wlr_output == nullptr) {
-		return 1.0f;
-	}
-	return (float) output->wlr_output->scale;
-}
-
 void ZenithOutputManager::schedule_cursor_frame(double x, double y) const {
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		if (!output_exists(server_, last_cursor_output_)) {
-			last_cursor_output_ = nullptr;
-		}
-		ZenithOutput* cursor_output = output_for_cursor(x, y);
-		ZenithOutput* previous_output = last_cursor_output_;
-		ZenithOutput* driver_output = vsync_driver_output();
-		if (zenith_cursor_debug_enabled() && previous_output != cursor_output) {
-			wlr_log(
-				WLR_INFO,
-				"zenith:cursor transition prev=%s next=%s driver=%s",
-				(previous_output != nullptr && previous_output->wlr_output != nullptr)
-					? previous_output->wlr_output->name
-					: "<none>",
-				(cursor_output != nullptr && cursor_output->wlr_output != nullptr)
-					? cursor_output->wlr_output->name
-					: "<none>",
-				(driver_output != nullptr && driver_output->wlr_output != nullptr)
-					? driver_output->wlr_output->name
-					: "<none>"
-			);
-		}
-		auto schedule_cursor_output = [this](ZenithOutput* output, bool cleanup_pending) {
-			if (output == nullptr || output->wlr_output == nullptr) {
-				return;
-			}
-			output->cursor_frame_pending = true;
-			output->cursor_cleanup_pending = output->cursor_cleanup_pending || cleanup_pending;
-			schedule_output_frame(output, true);
-		};
-
-		for (const auto& output_ptr : server_->outputs) {
-			ZenithOutput* output = output_ptr.get();
-			if (output == nullptr || output->wlr_output == nullptr) {
-				continue;
-			}
-
-			const bool cursor_visible_now = output_has_visible_cursor(output->wlr_output);
-			const bool cursor_became_invisible = output->cursor_visible_last_event && !cursor_visible_now;
-			const bool is_cursor_output = output == cursor_output;
-			const bool is_previous_output = output == previous_output;
-			const bool is_driver_output = output == driver_output;
-
-			const bool needs_schedule =
-				is_cursor_output ||
-				is_previous_output ||
-				is_driver_output ||
-				cursor_visible_now ||
-				cursor_became_invisible;
-			const bool cleanup_pending =
-				cursor_became_invisible ||
-				(is_previous_output && previous_output != cursor_output && !cursor_visible_now);
-
-			if (needs_schedule) {
-				schedule_cursor_output(output, cleanup_pending);
-				if (zenith_cursor_debug_enabled() && cursor_became_invisible) {
-					wlr_log(
-						WLR_INFO,
-						"zenith:cursor visibility dropped on output '%s' -> schedule cleanup",
-						output->wlr_output->name
-					);
-				}
-			}
-
-			output->cursor_visible_last_event = cursor_visible_now;
-		}
-		last_cursor_output_ = cursor_output;
-		return;
+	if (!output_exists(server_, last_cursor_output_)) {
+		last_cursor_output_ = nullptr;
 	}
-	if (server_->output != nullptr && server_->output->wlr_output != nullptr) {
-		server_->output->cursor_frame_pending = true;
-		server_->output->cursor_cleanup_pending = false;
-		server_->output->cursor_visible_last_event =
-			output_has_visible_cursor(server_->output->wlr_output);
-		schedule_output_frame(server_->output.get(), true);
-		last_cursor_output_ = server_->output.get();
+	ZenithOutput* cursor_output = output_for_cursor(x, y);
+	ZenithOutput* previous_output = last_cursor_output_;
+	ZenithOutput* driver_output = vsync_driver_output();
+	if (zenith_cursor_debug_enabled() && previous_output != cursor_output) {
+		wlr_log(
+			WLR_INFO,
+			"zenith:cursor transition prev=%s next=%s driver=%s",
+			(previous_output != nullptr && previous_output->wlr_output != nullptr)
+				? previous_output->wlr_output->name
+				: "<none>",
+			(cursor_output != nullptr && cursor_output->wlr_output != nullptr)
+				? cursor_output->wlr_output->name
+				: "<none>",
+			(driver_output != nullptr && driver_output->wlr_output != nullptr)
+				? driver_output->wlr_output->name
+				: "<none>"
+		);
 	}
+	auto schedule_cursor_output = [this](ZenithOutput* output, bool cleanup_pending) {
+		if (output == nullptr || output->wlr_output == nullptr || !output->wlr_output->enabled) {
+			return;
+		}
+		output->cursor_frame_pending = true;
+		output->cursor_cleanup_pending = output->cursor_cleanup_pending || cleanup_pending;
+		schedule_output_frame(output, true);
+	};
+
+	for (const auto& output_ptr : server_->outputs) {
+		ZenithOutput* output = output_ptr.get();
+		if (output == nullptr || output->wlr_output == nullptr || !output->wlr_output->enabled) {
+			continue;
+		}
+
+		const bool cursor_visible_now = output_has_visible_cursor(output->wlr_output);
+		const bool cursor_became_invisible = output->cursor_visible_last_event && !cursor_visible_now;
+		const bool is_cursor_output = output == cursor_output;
+		const bool is_previous_output = output == previous_output;
+		const bool is_driver_output = output == driver_output;
+
+		const bool needs_schedule =
+			is_cursor_output ||
+			is_previous_output ||
+			is_driver_output ||
+			cursor_visible_now ||
+			cursor_became_invisible;
+		const bool cleanup_pending =
+			cursor_became_invisible ||
+			(is_previous_output && previous_output != cursor_output && !cursor_visible_now);
+
+		if (needs_schedule) {
+			schedule_cursor_output(output, cleanup_pending);
+			if (zenith_cursor_debug_enabled() && cursor_became_invisible) {
+				wlr_log(
+					WLR_INFO,
+					"zenith:cursor visibility dropped on output '%s' -> schedule cleanup",
+					output->wlr_output->name
+				);
+			}
+		}
+
+		output->cursor_visible_last_event = cursor_visible_now;
+	}
+	last_cursor_output_ = cursor_output;
+	return;
 }
 
 void ZenithOutputManager::schedule_compositor_frame() const {
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		ZenithOutput* driver_output = vsync_driver_output();
-		for (const auto& output : server_->outputs) {
-			if (output != nullptr && output->wlr_output != nullptr) {
-				schedule_output_frame(output.get(), output.get() == driver_output);
-			}
+	ZenithOutput* driver_output = vsync_driver_output();
+	for (const auto& output : server_->outputs) {
+		if (output != nullptr && output->wlr_output != nullptr) {
+			schedule_output_frame(output.get(), output.get() == driver_output);
 		}
-		return;
 	}
-	if (server_->output != nullptr && server_->output->wlr_output != nullptr) {
-		schedule_output_frame(server_->output.get(), true);
-	}
+	return;
 }
 
 void ZenithOutputManager::set_display_enabled(bool enable) const {
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		for (const auto& output : server_->outputs) {
-			if (output == nullptr) {
-				continue;
-			}
-			if (enable) {
-				output->enable();
-			} else {
-				output->disable();
-			}
-		}
-		ensure_composition_target();
-		if (enable)
-			schedule_compositor_frame();
+	if (display_enabled_ == enable)
 		return;
-	}
-	if (server_->output == nullptr) {
-		return;
-	}
-	if (enable) {
-		server_->output->enable();
-	} else {
-		server_->output->disable();
-	}
-	publish_composition_target();
-	if (enable)
-		schedule_compositor_frame();
+
+	auto proposal = configuration();
+	const bool previous = display_enabled_;
+	display_enabled_ = enable;
+	if (!configure(proposal, false))
+		display_enabled_ = previous;
 }
 
 void ZenithOutputManager::update_active_output_from_cursor(double x, double y) const {
-	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
-		return;
-	}
 	ZenithOutput* hovered = output_for_cursor(x, y);
 	if (hovered != nullptr) {
 		active_output_ = hovered;
@@ -687,7 +520,7 @@ void ZenithOutputManager::schedule_output_frame(ZenithOutput* output, bool force
 		return;
 	}
 
-	if (force_immediate || mode_ != multimonitor::MultiMonitorMode::Extend) {
+	if (force_immediate) {
 		wlr_output_schedule_frame(output->wlr_output);
 		return;
 	}
@@ -722,59 +555,27 @@ std::shared_ptr<SwapChain<wlr_gles2_buffer>> ZenithOutputManager::composition_so
 }
 
 void ZenithOutputManager::publish_composition_target() const {
-	std::shared_ptr<SwapChain<wlr_gles2_buffer>> target;
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		target = extend_composition_swap_chain_;
-	} else if (server_->output && server_->output->wlr_output->enabled) {
-		target = server_->output->swap_chain;
-	}
-	std::atomic_store(&published_target_, std::move(target));
+	std::atomic_store(&published_target_, composition_swap_chain_);
 }
 
-int ZenithOutputManager::composition_source_width() const {
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		return extend_composition_width_;
-	}
-	ZenithOutput* render_output = current_render_output();
-	return render_output != nullptr ? render_output->swapchain_width : 0;
-}
+int ZenithOutputManager::composition_source_width() const { return composition_width_; }
 
-int ZenithOutputManager::composition_source_height() const {
-	if (mode_ == multimonitor::MultiMonitorMode::Extend) {
-		return extend_composition_height_;
-	}
-	ZenithOutput* render_output = current_render_output();
-	return render_output != nullptr ? render_output->swapchain_height : 0;
-}
+int ZenithOutputManager::composition_source_height() const { return composition_height_; }
 
 ZenithOutput* ZenithOutputManager::current_render_output() const {
-	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
-		if (server_->output != nullptr) {
-			return server_->output.get();
-		}
-		if (!server_->outputs.empty()) {
-			return server_->outputs.back().get();
-		}
-		return nullptr;
-	}
-
-	if (server_->output != nullptr && server_->output->wlr_output != nullptr) {
+	if (server_->output && server_->output->wlr_output->enabled)
 		return server_->output.get();
-	}
-	if (!server_->outputs.empty() && server_->outputs.back() != nullptr) {
-		return server_->outputs.back().get();
-	}
+
+	for (const auto& output : server_->outputs)
+		if (output && output->wlr_output->enabled)
+			return output.get();
+
 	return nullptr;
 }
 
 ZenithOutput* ZenithOutputManager::vsync_driver_output() const {
-	if (mode_ != multimonitor::MultiMonitorMode::Extend) {
-		return current_render_output();
-	}
-
-	if (!output_exists(server_, active_output_)) {
+	if (!output_exists(server_, active_output_))
 		active_output_ = nullptr;
-	}
 
 	switch (vsync_mode_) {
 		case VsyncDriverMode::RenderOutput:

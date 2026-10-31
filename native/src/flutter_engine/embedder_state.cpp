@@ -14,7 +14,7 @@
 #include "json_method_codec.h"
 #include "keyboard_helpers.hpp"
 #include "time.hpp"
-#include "multimonitor/multi_monitor_mode.hpp"
+
 #include "output/zenith_output_manager.hpp"
 #include "output/flutter_damage_policy.hpp"
 
@@ -948,45 +948,30 @@ void EmbedderState::set_window_state(size_t view_id, bool maximized, bool visibl
 }
 
 void EmbedderState::publish_monitor_layout() {
-	callable_queue.enqueue([this] {
-		if (platform_method_channel == nullptr) {
-			return;
-		}
-		ZenithServer* server = ZenithServer::instance();
-		EncodableList monitors{};
-		bool primary_assigned = false;
-		for (const auto& output : server->outputs) {
-			if (output == nullptr || output->wlr_output == nullptr) {
-				continue;
-			}
-
-			struct wlr_box box = {
-				.x = 0,
-				.y = 0,
-				.width = output->wlr_output->width,
-				.height = output->wlr_output->height,
-			};
-			if (server->output_layout != nullptr) {
-				wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
-			}
-			if (box.width <= 0 || box.height <= 0) {
-				box.width = output->wlr_output->width;
-				box.height = output->wlr_output->height;
-			}
-
-			monitors.emplace_back(EncodableMap{
-				{EncodableValue("id"), EncodableValue(std::string(output->wlr_output->name))},
-				{EncodableValue("x"), EncodableValue((int64_t) box.x)},
-				{EncodableValue("y"), EncodableValue((int64_t) box.y)},
-				{EncodableValue("width"), EncodableValue((int64_t) box.width)},
-				{EncodableValue("height"), EncodableValue((int64_t) box.height)},
-				{EncodableValue("is_primary"), EncodableValue(!primary_assigned)},
-			});
-			primary_assigned = true;
-		}
-
-		auto value = std::make_unique<EncodableValue>(std::move(monitors));
-		platform_method_channel->InvokeMethod("set_monitors", std::move(value));
+	// Snapshot on the Wayland thread: no live output pointers cross threads.
+	auto* server = ZenithServer::instance();
+	const auto outputs = server->output_manager->configuration();
+	zenith::DesktopGeometry geometry;
+	zenith::configuration_geometry(outputs, server->display_scale, INT32_MAX, geometry);
+	EncodableList monitors;
+	wlr_output* primary = server->output ? server->output->wlr_output : nullptr;
+	if (!primary) for (const auto& head : outputs) if (head.enabled) { primary = head.output; break; }
+	for (const auto& head : outputs) {
+		if (!head.enabled) continue;
+		const int width = int((head.transform & 1 ? head.height : head.width) / head.scale);
+		const int height = int((head.transform & 1 ? head.width : head.height) / head.scale);
+		monitors.emplace_back(EncodableMap{
+			{EncodableValue("id"), EncodableValue(std::string(head.output->name))},
+			{EncodableValue("x"), EncodableValue(int64_t(head.x) - geometry.x)},
+			{EncodableValue("y"), EncodableValue(int64_t(head.y) - geometry.y)},
+			{EncodableValue("width"), EncodableValue(int64_t(width))},
+			{EncodableValue("height"), EncodableValue(int64_t(height))},
+			{EncodableValue("is_primary"), EncodableValue(head.output == primary)},
+		});
+	}
+	callable_queue.enqueue([this, monitors = std::move(monitors)] {
+		if (platform_method_channel) platform_method_channel->InvokeMethod(
+			"set_monitors", std::make_unique<EncodableValue>(monitors));
 	});
 }
 

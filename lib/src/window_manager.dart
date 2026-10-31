@@ -91,6 +91,8 @@ class WindowManagerState extends State<WindowManager> {
   ProviderSubscription? _windowUnmappedSubscription;
   ProviderSubscription? _monitorListSubscription;
   List<MonitorConfig> _backendMonitorConfigs = const [];
+  bool _hasBackendMonitorLayout = false;
+  List<MonitorConfig> _placementMonitorConfigs = const [];
   bool? _cursorVisible;
 
   String _resolvedBackendWindowTitle({
@@ -214,6 +216,9 @@ class WindowManagerState extends State<WindowManager> {
           isPrimary: monitor.isPrimary,
         );
       }).toList(growable: false),
+      received: _backendContainer!
+          .read(backendMonitorListProvider.notifier)
+          .hasReceivedLayout,
     );
 
     _monitorListSubscription =
@@ -230,15 +235,21 @@ class WindowManagerState extends State<WindowManager> {
     });
   }
 
-  void _setBackendMonitors(List<MonitorConfig> monitors) {
-    if (_sameMonitorConfigs(_backendMonitorConfigs, monitors)) {
+  void _setBackendMonitors(
+    List<MonitorConfig> monitors,
+    {bool received = true}
+  ) {
+    if (_hasBackendMonitorLayout == received &&
+        _sameMonitorConfigs(_backendMonitorConfigs, monitors)) {
       return;
     }
     if (!mounted) {
+      _hasBackendMonitorLayout = received;
       _backendMonitorConfigs = monitors;
       return;
     }
     setState(() {
+      _hasBackendMonitorLayout = received;
       _backendMonitorConfigs = monitors;
     });
   }
@@ -918,7 +929,7 @@ class WindowManagerState extends State<WindowManager> {
     if (_effectiveMonitors.isNotEmpty) {
       return _effectiveMonitors;
     }
-    if (_backendMonitorConfigs.isNotEmpty) {
+    if (_hasBackendMonitorLayout) {
       return _backendMonitorConfigs;
     }
     if (widget.monitors.isNotEmpty) {
@@ -1138,7 +1149,7 @@ class WindowManagerState extends State<WindowManager> {
       return widget.monitors;
     }
 
-    final backendOrDynamic = _backendMonitorConfigs.isNotEmpty
+    final backendOrDynamic = _hasBackendMonitorLayout
         ? _backendMonitorConfigs
         : [
             MonitorConfig(
@@ -1172,15 +1183,47 @@ class WindowManagerState extends State<WindowManager> {
     if (monitors.isEmpty) {
       return;
     }
-    final defaultMonitorId = monitors.first.id;
-    final monitorIds = monitors.map((m) => m.id).toSet();
-    for (final window
-        in _hierarchyKey.currentState?.windows ?? const <WindowEntry>[]) {
-      final id = window.monitorId;
-      if (id == null || !monitorIds.contains(id)) {
-        window.monitorId = defaultMonitorId;
+    final previous = {
+      for (final monitor in _placementMonitorConfigs) monitor.id: monitor
+    };
+    final current = {for (final monitor in monitors) monitor.id: monitor};
+    for (final window in _hierarchyKey.currentState?.windows
+        ?? const <WindowEntry>[]) {
+
+      final old = previous[window.monitorId];
+      final target =
+          current[window.monitorId] ?? _preferredPrimaryMonitor(monitors);
+      final moved = window.monitorId != target.id ||
+          (old != null &&
+              (old.bounds != target.bounds || old.margin != target.margin));
+      window.monitorId = target.id;
+
+      if (!moved) continue;
+
+      final delta = target.bounds.topLeft -
+          (old?.bounds.topLeft ?? target.bounds.topLeft);
+      Rect relocate(Rect rect) =>
+          _clampRectToMonitorUsableBounds(window, rect.shift(delta));
+      window.windowRect = relocate(window.windowRect);
+
+      if (window.restoreRectAfterFullscreen != null) {
+        window.restoreRectAfterFullscreen =
+            relocate(window.restoreRectAfterFullscreen!);
       }
+
+      if (window.restoreRectAfterMaximize != null) {
+        window.restoreRectAfterMaximize =
+            relocate(window.restoreRectAfterMaximize!);
+        window.restoreMonitorIdAfterMaximize = target.id;
+      }
+
+      if (window.restoreRectAfterDock != null) {
+        window.restoreRectAfterDock = relocate(window.restoreRectAfterDock!);
+      }
+
+      syncBackendWindowGeometry(window, force: true);
     }
+    _placementMonitorConfigs = List.of(monitors);
   }
 }
 

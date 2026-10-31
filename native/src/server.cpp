@@ -5,7 +5,8 @@
 #include "util/egl/gl_context_lock.hpp"
 #include "egl/create_shared_egl_context.hpp"
 #include "zenith_toplevel_decoration.hpp"
-#include "multimonitor/multi_monitor_mode.hpp"
+#include "output/output_management.hpp"
+#include <cmath>
 #include "output/zenith_output_manager.hpp"
 #include "build_info.hpp"
 #include "xwayland_debug.hpp"
@@ -60,7 +61,7 @@ static void server_xwayland_ready(wl_listener* listener, void* data);
 static void zenith_maybe_default_libseat_backend();
 static void zenith_preflight_libseat();
 static void zenith_debug_log_loaded_libs();
-static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode);
+static void zenith_configure_drm_stability();
 static void zenith_maybe_allow_software_renderer();
 static void zenith_configure_gl_context_serialization(wlr_renderer* renderer);
 
@@ -129,7 +130,7 @@ static bool gl_renderer_string_looks_software(const char* renderer_name) {
 	       renderer.find("lavapipe") != std::string::npos;
 }
 
-static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode) {
+static void zenith_configure_drm_stability() {
 	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_MODIFIERS"))) {
 		setenv("WLR_DRM_NO_MODIFIERS", "1", 1);
 		wlr_log(
@@ -144,7 +145,6 @@ static void zenith_configure_drm_stability(multimonitor::MultiMonitorMode mode) 
 		wlr_log(WLR_INFO, "zenith: forcing WLR_DRM_NO_ATOMIC=1 (ZENITH_DRM_NO_ATOMIC)");
 	}
 
-	(void)mode;
 }
 
 static void zenith_maybe_allow_software_renderer() {
@@ -344,10 +344,8 @@ void ZenithServer::initialize() {
 	        zenith_build_version(), zenith_build_git_commit(), zenith_build_timestamp());
 
 	display_scale = read_display_scale();
-	const auto multi_monitor_mode = multimonitor::parse_multi_monitor_mode_from_env();
-	output_manager = std::make_unique<zenith::ZenithOutputManager>(this, multi_monitor_mode);
-	wlr_log(WLR_INFO, "zenith: multi-monitor mode=%s", multimonitor::to_string(multi_monitor_mode));
-	zenith_configure_drm_stability(multi_monitor_mode);
+	output_manager = std::make_unique<zenith::ZenithOutputManager>(this);
+	zenith_configure_drm_stability();
 	zenith_maybe_allow_software_renderer();
 
 	display = wl_display_create();
@@ -461,6 +459,7 @@ void ZenithServer::initialize() {
 		throw std::runtime_error("compositor initialization failed");
 	}
 
+	output_management = std::make_unique<zenith::OutputManagement>(this);
 	output_layout = wlr_output_layout_create(display);
 	if (output_layout == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots output layout");
@@ -647,18 +646,7 @@ int ZenithServer::run(const char* startup_command) {
 	flutter_gl_context.release();
 	flutter_resource_gl_context.release();
 	embedder_state->run_engine();
-	if (output_manager != nullptr) {
-		if (output_manager->mode() == multimonitor::MultiMonitorMode::Extend) {
-			for (const auto& current_output : outputs) {
-				if (current_output != nullptr) {
-					output_manager->handle_output_state_changed(current_output.get());
-					break;
-				}
-			}
-		} else if (output != nullptr) {
-			output_manager->handle_output_state_changed(output.get());
-		}
-	}
+	output_manager->reconcile();
 
 	// Fallback startup kick: make sure at least one frame is scheduled right
 	// after Flutter starts so first client content can appear without input.
@@ -723,6 +711,7 @@ void ZenithServer::shutdown() {
 
 	// Output destroy callbacks release scene/presentation leases. Do not
 	// reconfigure surviving outputs while tearing down the backend.
+	output_management.reset();
 	if (backend) wlr_backend_destroy(backend);
 	backend = nullptr;
 	output.reset();
@@ -785,7 +774,8 @@ static float read_display_scale() {
 		return 1.0f;
 	}
 	try {
-		return std::stof(display_scale_str);
+		const float scale = std::stof(display_scale_str);
+		return std::isfinite(scale) && scale > 0 ? scale : 1.0f;
 	} catch (std::invalid_argument&) {
 		return 1.0f;
 	} catch (std::out_of_range&) {
