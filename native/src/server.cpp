@@ -801,10 +801,26 @@ void server_new_input(wl_listener* listener, void* data) {
 			}
 
 			if (wlr_input_device_is_libinput(wlr_device)) {
-				// Enable tapping by default on all touchpads.
 				libinput_device* device = wlr_libinput_get_device_handle(wlr_device);
+
+				// Tap-capable pointers are touchpads. Keep their adaptive acceleration,
+				// while using a flat profile for mice until input settings are exposed.
+				const bool is_touchpad = libinput_device_config_tap_get_finger_count(device) > 0;
+				const auto profile = is_touchpad
+					? LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
+					: LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
+				if (libinput_device_config_accel_get_profiles(device) & profile) {
+					const auto status = libinput_device_config_accel_set_profile(device, profile);
+					if (status != LIBINPUT_CONFIG_STATUS_SUCCESS) {
+						wlr_log(WLR_ERROR, "Failed to set acceleration profile for %s: %s",
+							libinput_device_get_name(device), libinput_config_status_to_str(status));
+					}
+				}
+
+				// Enable tapping by default on all touchpads.
 				libinput_device_config_tap_set_enabled(device, LIBINPUT_CONFIG_TAP_ENABLED);
 				libinput_device_config_tap_set_drag_enabled(device, LIBINPUT_CONFIG_DRAG_ENABLED);
+
 				// Use conventional scrolling for both clients and the Flutter UI.
 				// This branch includes mice as well as touchpads.
 				libinput_device_config_scroll_set_natural_scroll_enabled(device, false);
