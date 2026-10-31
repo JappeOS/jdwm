@@ -11,6 +11,7 @@
 #include "encodable_value.h"
 #include "time.hpp"
 #include "util/embedder/keyboard_helpers.hpp"
+#include "util/embedder/mouse_button_mapping.hpp"
 #include "assert.hpp"
 #include "util/wlr/wlr_extensions.hpp"
 #include "auth.hpp"
@@ -339,19 +340,10 @@ void mouse_button_event(ZenithServer* server, const flutter::MethodCall<>& call,
 	auto is_pressed = std::get<bool>(args[flutter::EncodableValue("is_pressed")]);
 	auto button = std::get<int>(args[flutter::EncodableValue("button")]);
 
-	int32_t linux_button = 0;
-	switch (button) {
-		case kFlutterPointerButtonMousePrimary:
-			linux_button = BTN_LEFT;
-			break;
-		case kFlutterPointerButtonMouseSecondary:
-			linux_button = BTN_RIGHT;
-			break;
-		case kFlutterPointerButtonMouseMiddle:
-			linux_button = BTN_MIDDLE;
-			break;
-		default:
-			break;
+	const uint32_t linux_button = flutter_mouse_button_to_linux(button);
+	if (linux_button == 0) {
+		result->Success();
+		return;
 	}
 
 	server->callable_queue.enqueue([server, linux_button, is_pressed] {
