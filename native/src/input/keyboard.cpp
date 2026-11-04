@@ -5,10 +5,8 @@
 
 extern "C" {
 #include <wayland-util.h>
-#include <linux/vt.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include <wlr/backend/session.h>
+#include <wlr/util/log.h>
 #define static
 #include <wlr/types/wlr_xdg_shell.h>
 #undef static
@@ -172,11 +170,14 @@ bool handle_shortcuts(struct ZenithKeyboard* keyboard, uint32_t modifiers, xkb_k
 	// Ctrl + Alt + F<num>
 	for (int vt = 1; vt <= 12; vt++) {
 		if (is_key_pressed(XKB_KEY_XF86Switch_VT_1 + vt - 1)) {
-			int fd = open("/dev/tty", O_RDWR);
-			if (fd > 0) {
-				ioctl(fd, VT_ACTIVATE, vt);
-				ioctl(fd, VT_WAITACTIVE, vt);
-				close(fd);
+			// A compositor started by systemd need not have a controlling TTY.
+			// Let libseat/logind switch VTs and deliver the seat pause/resume events.
+			auto* session = keyboard->server->session;
+			if (session == nullptr) {
+				return false; // Nested/headless backends have no VT to switch.
+			}
+			if (!wlr_session_change_vt(session, static_cast<unsigned>(vt))) {
+				wlr_log(WLR_ERROR, "zenith: could not switch to VT %d", vt);
 			}
 			return true;
 		}

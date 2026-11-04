@@ -380,7 +380,7 @@ void ZenithServer::initialize() {
 
 	const bool has_seatd_socket = path_exists("/run/seatd.sock");
 	const bool has_system_bus = path_exists("/run/dbus/system_bus_socket");
-	backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
+	backend = wlr_backend_autocreate(wl_display_get_event_loop(display), &session);
 	if (backend == nullptr && !user_specified_libseat_backend) {
 		// Retry once with the alternative backend when available, to be more robust in
 		// systemd service/transient-unit scenarios.
@@ -388,13 +388,15 @@ void ZenithServer::initialize() {
 		if (has_seatd_socket && !env_equals(current, "seatd")) {
 			wlr_log(WLR_INFO, "zenith: retrying wlroots backend creation with LIBSEAT_BACKEND=seatd");
 			setenv("LIBSEAT_BACKEND", "seatd", 1);
-			backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
+			backend = wlr_backend_autocreate(wl_display_get_event_loop(display), &session);
 		}
+
 		current = std::getenv("LIBSEAT_BACKEND");
+
 		if (backend == nullptr && has_system_bus && !env_equals(current, "logind")) {
 			wlr_log(WLR_INFO, "zenith: retrying wlroots backend creation with LIBSEAT_BACKEND=logind");
 			setenv("LIBSEAT_BACKEND", "logind", 1);
-			backend = wlr_backend_autocreate(wl_display_get_event_loop(display), NULL);
+			backend = wlr_backend_autocreate(wl_display_get_event_loop(display), &session);
 		}
 	}
 	if (backend == nullptr) {

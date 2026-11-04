@@ -51,6 +51,8 @@ class ZenithOutputManager;
 class OutputManagement;
 }
 
+struct wlr_session;
+
 struct ZenithServer {
 private:
 	ZenithServer();
@@ -73,6 +75,7 @@ public:
 
 	wl_display* display = nullptr;
 	wlr_backend* backend = nullptr;
+	wlr_session* session = nullptr; // Owned by the wlroots backend.
 	wlr_renderer* renderer = nullptr;
 	wlr_allocator* allocator = nullptr;
 	wlr_compositor* compositor = nullptr;
