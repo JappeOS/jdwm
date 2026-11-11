@@ -699,6 +699,22 @@ class WindowManagerState extends State<WindowManager> {
         [];
   }
 
+  /// Restores and focuses a window.
+  void activateWindow(WindowEntry entry) {
+    if (!getAllWindows().contains(entry)) return;
+
+    final viewId = entry.backendViewId;
+    if (viewId != null && _backendContainer != null) {
+      _backendContainer!
+          .read(xdgToplevelStatesProvider(viewId).notifier)
+          .requestVisible(true);
+    } else {
+      entry.minimized = false;
+    }
+
+    requestFocus(entry);
+  }
+
   /// Unified focus path for both backend (CSD/SSD) and local windows.
   ///
   /// Ensures z-order focus is updated once and backend keyboard focus stays
