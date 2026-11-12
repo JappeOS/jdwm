@@ -606,12 +606,19 @@ int ZenithServer::run(const char* startup_command) {
 		return exit_status;
 	}
 
-	// Make sure the X11 session from the host is not visible because some programs prefer talking
-	// to the X server instead of defaulting to Wayland.
-	unsetenv("DISPLAY");
-
-	setenv("WAYLAND_DISPLAY", socket, true);
-	setenv("XDG_SESSION_TYPE", "wayland", true);
+	// wlroots reserves the X display name and listening sockets at creation,
+	// before the asynchronous ready event. Publish our session environment before
+	// starting Flutter: Dart caches Platform.environment, including the environment
+	// used to launch children. Replace the host's DISPLAY when running nested.
+	if (xwayland->display_name == nullptr || xwayland->display_name[0] == '\0' ||
+		setenv("DISPLAY", xwayland->display_name, true) != 0 ||
+		setenv("WAYLAND_DISPLAY", socket, true) != 0 ||
+		setenv("XDG_SESSION_TYPE", "wayland", true) != 0) {
+		wlr_log(WLR_ERROR, "Could not configure the compositor session environment");
+		request_shutdown(12);
+		shutdown();
+		return exit_status;
+	}
 
 	wlr_egl* main_egl = wlr_gles2_renderer_get_egl(renderer);
 
@@ -767,7 +774,6 @@ static void server_xwayland_ready(wl_listener* listener, void* data) {
 	}
 	server->window_metadata->connect_xwayland(server->xwayland->display_name);
 	server->xwayland_is_ready = true;
-	setenv("DISPLAY", server->xwayland->display_name, true);
 	wlr_log(WLR_INFO, "Running Xwayland on DISPLAY=%s", server->xwayland->display_name);
 	if (server->output_manager != nullptr) {
 		server->output_manager->refresh_xwayland_workareas();

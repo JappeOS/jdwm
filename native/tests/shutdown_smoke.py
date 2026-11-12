@@ -26,6 +26,8 @@ def run_case(runner, client_exe, logs, output_count, action):
             WLR_RENDERER_ALLOW_SOFTWARE="1",
             WLR_HEADLESS_OUTPUTS=str(output_count),
             ZENITH_TRACE_FRAME_TIMING="1",
+            DISPLAY=":59999",
+            JDWM_TEST_HOST_DISPLAY=":59999",
         )
         args = [str(runner)]
         if action in ("shortcut", "early"):
@@ -57,6 +59,7 @@ def run_case(runner, client_exe, logs, output_count, action):
                 assert "ERROR: AddressSanitizer" not in content, path
                 assert "runtime error:" not in content, path
                 if clients:
+                    assert "session-environment: inherited DISPLAY=" in content, f"display environment missing: {path}"
                     assert "stage=frame" in content, f"Flutter did not render: {path}"
                     assert content.count("xdg_surface map,") == 3, f"clients not mapped: {path}"
                     for client in clients:

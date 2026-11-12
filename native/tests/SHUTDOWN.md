@@ -30,6 +30,9 @@ The fixture consists of:
   desktop services. Build it as `lib/main.dart` in a temporary Flutter project,
   using the SDK version matching the Sony engine. A mismatched snapshot can
   abort inside the engine before any shutdown test runs.
+  It reads `DISPLAY`/`WAYLAND_DISPLAY` immediately at Dart startup and verifies
+  that a spawned child inherits them even when environment overrides are used.
+  The harness seeds a host `DISPLAY` to ensure JDWM replaces it with its own.
 - `shutdown_smoke.cpp`: a runner linked against the backend and matching engine,
   using the normal compositor runner's include/link flags. Include `-lGL`:
   the engine's default GL resolver needs its exported extension entry points.
