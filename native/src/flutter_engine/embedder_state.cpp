@@ -981,3 +981,7 @@ void EmbedderState::update_text_editing_state() {
 		text_input_client->update_editing_state();
 	});
 }
+
+void EmbedderState::deliver_window_metadata(std::unique_ptr<EncodableValue> value) {
+	platform_method_channel->InvokeMethod("set_window_metadata", std::move(value));
+}

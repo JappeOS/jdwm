@@ -1,3 +1,4 @@
+#include "window_metadata/window_metadata.hpp"
 #include "zenith_xdg_surface.hpp"
 #include "zenith_xdg_toplevel.hpp"
 #include "binary_messenger.hpp"
@@ -95,6 +96,8 @@ void zenith_xdg_surface_map(wl_listener* listener, void* data) {
 	}
 
 	server->embedder_state->map_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
+	if (server->window_metadata && zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL)
+		server->window_metadata->map(id);
 	if (auto it = server->toplevels.find(id); it != server->toplevels.end())
 		server->embedder_state->set_window_state(id, it->second->maximized(), it->second->visible());
 	server->output_manager->schedule_compositor_frame();
@@ -118,6 +121,10 @@ void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
 		}
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 	}
+
+	if (server->window_metadata)
+		server->window_metadata->unmap(id);
+
 	server->embedder_state->unmap_xdg_surface(id, (int) zenith_xdg_surface->xdg_surface->role);
 	server->output_manager->schedule_compositor_frame();
 }
@@ -148,6 +155,9 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 	}
 
 	if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
+		if (server->window_metadata)
+			server->window_metadata->forget(id);
+
 		bool erased = server->xdg_toplevels.erase(id);
 		assert(erased);
 		erased = server->toplevels.erase(id);

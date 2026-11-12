@@ -93,6 +93,9 @@ struct EmbedderState {
 
 	void set_window_title(size_t view_id, const std::string& title, const std::string& protocol = "xdg");
 
+	// Called on the Flutter platform thread by the coalesced metadata dispatcher.
+	void deliver_window_metadata(std::unique_ptr<flutter::EncodableValue> value);
+
 	void set_app_id(size_t view_id, const std::string& app_id, const std::string& protocol = "xdg");
 
 	void set_window_state(size_t view_id, bool maximized, bool visible, const std::string& protocol = "xdg");

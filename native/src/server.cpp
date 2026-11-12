@@ -1,4 +1,5 @@
 #include "server.hpp"
+#include "window_metadata/window_metadata.hpp"
 #include "debug.hpp"
 #include "assert.hpp"
 #include "util/egl/egl_extensions.hpp"
@@ -447,6 +448,7 @@ void ZenithServer::initialize() {
 		wlr_log(WLR_ERROR, "Could not create wlroots subcompositor");
 		throw std::runtime_error("compositor initialization failed");
 	}
+	window_metadata = std::make_unique<zenith::WindowMetadata>(this);
 	viewporter = wlr_viewporter_create(display);
 	if (viewporter == nullptr) {
 		wlr_log(WLR_ERROR, "Could not create wlroots viewporter");
@@ -703,6 +705,7 @@ void ZenithServer::shutdown() {
 	keyboards.clear();
 	touch_devices.clear();
 
+	window_metadata.reset();
 	// Xwayland must not restart when its Wayland client is disconnected.
 	if (xwayland) wlr_xwayland_destroy(xwayland);
 	xwayland = nullptr;
@@ -762,6 +765,7 @@ static void server_xwayland_ready(wl_listener* listener, void* data) {
 	if (server->xwayland == nullptr || server->xwayland->display_name == nullptr) {
 		return;
 	}
+	server->window_metadata->connect_xwayland(server->xwayland->display_name);
 	server->xwayland_is_ready = true;
 	setenv("DISPLAY", server->xwayland->display_name, true);
 	wlr_log(WLR_INFO, "Running Xwayland on DISPLAY=%s", server->xwayland->display_name);

@@ -1,5 +1,6 @@
 #include "zenith_xdg_toplevel.hpp"
 #include "server.hpp"
+#include "window_metadata/window_metadata.hpp"
 #include "zenith_toplevel_decoration.hpp"
 
 extern "C" {
@@ -86,6 +87,8 @@ void zenith_xdg_toplevel_destroy(wl_listener* listener, void* data) {
 	auto* server = ZenithServer::instance();
 	size_t id = zenith_xdg_toplevel->zenith_xdg_surface->zenith_surface->id;
 	server->toplevel_geometries.erase(id);
+	if (server->window_metadata)
+		server->window_metadata->forget(id);
 
 	// wlroots emits toplevel->events.destroy and then asserts all listener
 	// lists are empty, so detach every toplevel listener here.

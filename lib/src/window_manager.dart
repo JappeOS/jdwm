@@ -18,6 +18,7 @@ import '../zenith_backend.dart';
 import 'client_cursor.dart';
 import 'monitor_region.dart';
 import 'window_entry.dart';
+import 'window_metadata.dart';
 import 'window_hierarchy.dart';
 
 @immutable
@@ -31,8 +32,12 @@ class ManagedWindowInfo {
     required this.maximized,
     required this.focused,
     this.fullscreen = false,
+    this.metadata = const ClientWindowMetadata(),
   });
 
+  final ClientWindowMetadata metadata;
+  String get wmClass => metadata.wmClass;
+  String get wmInstance => metadata.wmInstance;
   final int viewId;
   final String protocol;
   final String title;
@@ -90,6 +95,7 @@ class WindowManagerState extends State<WindowManager> {
   ProviderSubscription? _windowMappedSubscription;
   ProviderSubscription? _windowUnmappedSubscription;
   ProviderSubscription? _monitorListSubscription;
+  ProviderSubscription? _metadataSubscription;
   List<MonitorConfig> _backendMonitorConfigs = const [];
   bool _hasBackendMonitorLayout = false;
   List<MonitorConfig> _placementMonitorConfigs = const [];
@@ -157,6 +163,7 @@ class WindowManagerState extends State<WindowManager> {
     _windowMappedSubscription?.close();
     _windowUnmappedSubscription?.close();
     _monitorListSubscription?.close();
+    _metadataSubscription?.close();
     for (final subs in _backendSubscriptions.values) {
       for (final sub in subs) {
         sub.close();
@@ -175,6 +182,8 @@ class WindowManagerState extends State<WindowManager> {
 
     final platformApi = _backendContainer!.read(platformApiProvider.notifier);
     platformApi.init();
+    _metadataSubscription = _backendContainer!.listen(windowMetadataProvider,
+        (_, __) => _notifyWindowStateListeners());
     unawaited(
       platformApi.requestMonitorsSnapshot().catchError((error) {
         if (error is PlatformException &&
@@ -784,6 +793,8 @@ class WindowManagerState extends State<WindowManager> {
       infos.add(
         ManagedWindowInfo(
           viewId: viewId,
+          metadata: container.read(windowMetadataProvider)[viewId] ??
+              const ClientWindowMetadata(),
           protocol: protocol,
           title: state.title,
           appId: state.appId,

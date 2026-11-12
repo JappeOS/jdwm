@@ -1,3 +1,4 @@
+#include "window_metadata/window_metadata.hpp"
 #include "zenith_xwayland_toplevel.hpp"
 
 #include "server.hpp"
@@ -360,6 +361,8 @@ void ZenithXwaylandToplevel::handle_unmap() {
 	}
 
 	if (is_mapped && registered && managed()) {
+		if (server->window_metadata)
+			server->window_metadata->unmap(view_id);
 		server->embedder_state->unmap_toplevel_surface(view_id, protocol());
 		server->output_manager->schedule_compositor_frame();
 	}
@@ -396,6 +399,8 @@ void zenith_xwayland_surface_destroy(wl_listener* listener, void* data) {
 	wl_list_remove(&toplevel->destroy.link);
 
 	if (toplevel->registered) {
+		if (server->window_metadata)
+			server->window_metadata->forget(toplevel->view_id);
 		server->toplevel_geometries.erase(toplevel->view_id);
 		server->xwayland_toplevels.erase(toplevel->view_id);
 		server->toplevels.erase(toplevel->view_id);
@@ -535,6 +540,8 @@ void zenith_xwayland_surface_dissociate(wl_listener* listener, void* data) {
 	toplevel->handle_unmap();
 	toplevel->detach_surface_listeners();
 	if (toplevel->registered) {
+		if (server->window_metadata)
+			server->window_metadata->forget(toplevel->view_id);
 		server->toplevel_geometries.erase(toplevel->view_id);
 		server->xwayland_toplevels.erase(toplevel->view_id);
 		server->toplevels.erase(toplevel->view_id);
@@ -575,6 +582,8 @@ void zenith_xwayland_surface_map(wl_listener* listener, void* data) {
 	}
 
 	server->embedder_state->map_toplevel_surface(toplevel->view_id, toplevel->protocol());
+	if (server->window_metadata)
+		server->window_metadata->map(toplevel->view_id, toplevel->xwayland_surface);
 	toplevel->emit_commit();
 	server->embedder_state->set_window_state(
 		toplevel->view_id,

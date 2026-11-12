@@ -371,7 +371,7 @@ final class PlatformApiProvider
   }
 }
 
-String _$platformApiHash() => r'411c0dbe432d00cde25cea128cf2ca03edd64797';
+String _$platformApiHash() => r'3e727eb355c284c8f906a2876fb5d82a9bc53021';
 
 abstract class _$PlatformApi extends $Notifier<PlatformApiState> {
   PlatformApiState build();

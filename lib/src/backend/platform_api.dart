@@ -15,6 +15,8 @@ import 'package:jdwm/src/core/models/surface_role.dart';
 import 'package:jdwm/src/core/models/toplevel_decoration.dart';
 import 'package:jdwm/src/core/models/xdg_surface_role.dart';
 
+import '../window_metadata.dart';
+
 part 'platform_api.g.dart';
 
 @Riverpod(keepAlive: true)
@@ -171,6 +173,19 @@ class PlatformApi extends _$PlatformApi {
           break;
         case "set_toplevel_state":
           _onGenericToplevelEvent(call.method, call.arguments);
+          break;
+        case "set_window_metadata":
+          final event = call.arguments;
+          if (event is Map && event["view_id"] is int) {
+            final id = event["view_id"] as int;
+            if (ref.read(mappedWindowListProvider).contains(id)) {
+              final metadata = ClientWindowMetadata.fromMessage(event);
+              if (metadata != null) {
+                ref.read(windowMetadataProvider.notifier).update(id, metadata);
+                _upsertWindowInfo(id);
+              }
+            }
+          }
           break;
         case "set_monitors":
           _setMonitors(call.arguments);
@@ -666,6 +681,7 @@ class PlatformApi extends _$PlatformApi {
   void _unmapToplevelView(int viewId) {
     final wasMapped = ref.read(mappedWindowListProvider).contains(viewId);
     ref.read(mappedWindowListProvider.notifier).remove(viewId);
+    ref.read(windowMetadataProvider.notifier).remove(viewId);
     _removeWindowInfo(viewId);
     if (wasMapped) {
       state.windowUnmappedSink.add(viewId);
@@ -711,6 +727,8 @@ class PlatformApi extends _$PlatformApi {
       visible: visible ?? previous?.visible ?? fallback.visible,
       maximized: maximized ?? previous?.maximized ?? fallback.maximized,
       fullscreen: fullscreen ?? previous?.fullscreen ?? fallback.fullscreen,
+      metadata: ref.read(windowMetadataProvider)[viewId] ??
+          const ClientWindowMetadata(),
     );
     if (previous == next) {
       return;
@@ -983,8 +1001,10 @@ class BackendWindowInfo {
     required this.visible,
     required this.maximized,
     this.fullscreen = false,
+    this.metadata = const ClientWindowMetadata(),
   });
 
+  final ClientWindowMetadata metadata;
   final int viewId;
   final String protocol;
   final String title;
@@ -1010,12 +1030,13 @@ class BackendWindowInfo {
         other.appId == appId &&
         other.visible == visible &&
         other.maximized == maximized &&
-        other.fullscreen == fullscreen;
+        other.fullscreen == fullscreen &&
+        identical(other.metadata, metadata);
   }
 
   @override
   int get hashCode => Object.hash(
-      viewId, protocol, title, appId, visible, maximized, fullscreen);
+      viewId, protocol, title, appId, visible, maximized, fullscreen, metadata);
 }
 
 @immutable
