@@ -23,6 +23,16 @@ import 'window_hierarchy.dart';
 
 @immutable
 class ManagedWindowInfo {
+  final ClientWindowMetadata metadata;
+  final int viewId;
+  final ManagedWindowProtocol protocol;
+  final String title;
+  final String appId;
+  final bool visible;
+  final bool maximized;
+  final bool focused;
+  final bool fullscreen;
+
   const ManagedWindowInfo({
     required this.viewId,
     required this.protocol,
@@ -35,17 +45,13 @@ class ManagedWindowInfo {
     this.metadata = const ClientWindowMetadata(),
   });
 
-  final ClientWindowMetadata metadata;
   String get wmClass => metadata.wmClass;
   String get wmInstance => metadata.wmInstance;
-  final int viewId;
-  final String protocol;
-  final String title;
-  final String appId;
-  final bool visible;
-  final bool maximized;
-  final bool focused;
-  final bool fullscreen;
+}
+
+enum ManagedWindowProtocol {
+  xdg,
+  xwayland,
 }
 
 class WindowManager extends StatefulWidget {
@@ -788,8 +794,8 @@ class WindowManagerState extends State<WindowManager> {
       final state = container.read(xdgToplevelStatesProvider(viewId));
       final protocol =
           container.read(platformApiProvider.notifier).isXwaylandView(viewId)
-              ? "xwayland"
-              : "xdg";
+              ? ManagedWindowProtocol.xwayland
+              : ManagedWindowProtocol.xdg;
       infos.add(
         ManagedWindowInfo(
           viewId: viewId,
