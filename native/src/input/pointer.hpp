@@ -54,6 +54,10 @@ public:
 		return manual_lock || client_lock;
 	}
 
+	bool is_client_locked() const {
+		return client_lock;
+	}
+
 	bool is_forced_hidden() const {
 		return forced_hidden;
 	}

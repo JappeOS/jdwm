@@ -209,6 +209,12 @@ void server_cursor_motion(wl_listener* listener, void* data) {
 		);
 	}
 
+	// Locked clients receive relative motion only. Routing the stationary
+	// position through Flutter can generate absolute motion after hit testing.
+	if (pointer->is_client_locked()) {
+		return;
+	}
+
 	/* The cursor doesn't move unless we tell it to. The cursor automatically
 	 * handles constraining the motion to the output layout, as well as any
 	 * special configuration applied for the specific input device which
@@ -244,6 +250,10 @@ void server_cursor_motion_absolute(wl_listener* listener, void* data) {
 
 	server_update_pointer_constraint(server);
 	pointer->reveal_from_input_activity();
+
+	if (pointer->is_client_locked()) {
+		return;
+	}
 
 	if (!pointer->is_locked()) {
 		wlr_cursor_warp_absolute(pointer->cursor, &event->pointer->base, event->x, event->y);
