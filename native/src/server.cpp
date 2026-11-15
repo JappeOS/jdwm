@@ -941,6 +941,7 @@ void server_update_pointer_constraint(ZenithServer* server) {
 	}
 
 	if (server->active_pointer_constraint != nullptr) {
+		server->pointer->trace("constraint-deactivate");
 		wlr_pointer_constraint_v1_send_deactivated(server->active_pointer_constraint);
 		detach_active_pointer_constraint_listener(server);
 	}
@@ -952,11 +953,13 @@ void server_update_pointer_constraint(ZenithServer* server) {
 	server->pointer->set_client_locked(
 		constraint != nullptr && constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED
 	);
+	server->pointer->trace("constraint-update");
 }
 
 void server_active_pointer_constraint_destroy(wl_listener* listener, void* data) {
 	(void) data;
 	ZenithServer* server = wl_container_of(listener, server, active_pointer_constraint_destroy);
+	if (server->pointer != nullptr) server->pointer->trace("constraint-destroy");
 	server->active_pointer_constraint = nullptr;
 	if (server->pointer != nullptr) {
 		server->pointer->set_client_locked(false);

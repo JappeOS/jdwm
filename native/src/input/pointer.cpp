@@ -27,6 +27,39 @@ static bool has_any_output(ZenithServer* server) {
 	return server->output_manager->current_render_output() != nullptr;
 }
 
+void ZenithPointer::trace(const char* event, double x, double y, double raw_x, double raw_y) const {
+	static const bool enabled = [] {
+		const char* value = std::getenv("ZENITH_TRACE_POINTER");
+		return value && value[0] && value[0] != '0';
+	}();
+
+	if (!enabled || !server->seat) return;
+
+	const auto& state = server->seat->pointer_state;
+	const auto* constraint = server->active_pointer_constraint;
+	unsigned receivers = 0;
+	if (server->relative_pointer_manager && state.focused_client) {
+		wlr_relative_pointer_v1* relative;
+		wl_list_for_each(relative, &server->relative_pointer_manager->relative_pointers, link) {
+			if (relative->seat == server->seat &&
+			    wlr_seat_client_from_pointer_resource(relative->pointer_resource) == state.focused_client) {
+				++receivers;
+			}
+		}
+	}
+
+	wlr_log(WLR_INFO,
+		"zenith:pointer event=%s focus=%p surface_id=%u constraint=%p type=%s "
+		"client_lock=%d manual_lock=%d client_hidden=%d receivers=%u "
+		"cursor=(%.3f,%.3f) seat=(%.3f,%.3f) data=(%.3f,%.3f) raw=(%.3f,%.3f)",
+		event, (void*) state.focused_surface,
+		state.focused_surface ? wl_resource_get_id(state.focused_surface->resource) : 0,
+		(void*) constraint, !constraint ? "none" :
+			(constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED ? "locked" : "confined"),
+		client_lock, manual_lock, client_hidden, receivers,
+		cursor->x, cursor->y, state.sx, state.sy, x, y, raw_x, raw_y);
+}
+
 void ZenithPointer::apply_cursor() {
 	visible = input_visible && !forced_hidden && !client_hidden;
 	// Reattach after wlroots' listener so surface destruction restores the
@@ -109,6 +142,7 @@ ZenithPointer::ZenithPointer(ZenithServer* server)
 		auto* event = static_cast<wlr_seat_pointer_focus_change_event*>(data);
 		if (event->new_surface != event->old_surface) {
 			pointer->restore_compositor_cursor();
+			pointer->trace("focus-change");
 		}
 	};
 	wl_signal_add(&server->seat->pointer_state.events.focus_change, &pointer_focus_change);
@@ -196,6 +230,7 @@ void server_cursor_motion(wl_listener* listener, void* data) {
 
 	server_update_pointer_constraint(server);
 	pointer->reveal_from_input_activity();
+	pointer->trace("relative-input", event->delta_x, event->delta_y, event->unaccel_dx, event->unaccel_dy);
 
 	if (server->relative_pointer_manager != nullptr) {
 		wlr_relative_pointer_manager_v1_send_relative_motion(
@@ -250,6 +285,7 @@ void server_cursor_motion_absolute(wl_listener* listener, void* data) {
 
 	server_update_pointer_constraint(server);
 	pointer->reveal_from_input_activity();
+	pointer->trace("absolute-input", event->x, event->y);
 
 	if (pointer->is_client_locked()) {
 		return;
@@ -354,5 +390,7 @@ void server_cursor_axis(wl_listener* listener, void* data) {
 
 void server_cursor_frame(wl_listener* listener, void* data) {
 	/* Notify the client with pointer focus of the frame event. */
-	wlr_seat_pointer_notify_frame(ZenithServer::instance()->seat);
+	ZenithPointer* pointer = wl_container_of(listener, pointer, cursor_frame);
+	pointer->trace("hardware-frame");
+	wlr_seat_pointer_notify_frame(pointer->server->seat);
 }

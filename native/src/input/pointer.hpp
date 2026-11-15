@@ -74,6 +74,9 @@ public:
 	void set_client_locked(bool value);
 	void restore_compositor_cursor();
 	void set_client_cursor(wlr_surface* surface, int32_t hotspot_x, int32_t hotspot_y);
+	// Opt-in input routing diagnostics; call only on the Wayland thread.
+	void trace(const char* event, double x = 0, double y = 0,
+	           double raw_x = 0, double raw_y = 0) const;
 };
 
 /*
