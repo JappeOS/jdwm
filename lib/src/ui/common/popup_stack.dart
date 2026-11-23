@@ -11,12 +11,14 @@ class PopupStack extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Stack(
-      key: ref.watch(popupStackGlobalKeyProvider),
-      children: [
-        for (int viewId in ref.watch(popupStackChildrenProvider))
-          ref.watch(popupWidgetProvider(viewId)),
-      ],
+    return SizedBox.expand(
+      child: Stack(
+        key: ref.watch(popupStackGlobalKeyProvider),
+        children: [
+          for (int viewId in ref.watch(popupStackChildrenProvider))
+            ref.watch(popupWidgetProvider(viewId)),
+        ],
+      ),
     );
   }
 }

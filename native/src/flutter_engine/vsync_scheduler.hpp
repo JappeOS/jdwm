@@ -22,24 +22,28 @@ public:
 		pending_ = baton;
 	}
 
-	VsyncDispatch poll(uint64_t now_ns, uint64_t interval_ns, bool frame_ready = true) {
+	template<class CanSchedule>
+	VsyncDispatch poll(uint64_t now_ns, uint64_t interval_ns, CanSchedule can_schedule) {
 		assert(interval_ns > 0);
 		std::scoped_lock lock(mutex_);
+
 		if (!pending_) return {};
-		// Refresh pacing alone does not bound queued GPU work. Retain the
-		// request until the previous submission completes; never wait on the
-		// Wayland thread or manufacture a vsync for an already consumed baton.
-		if (!frame_ready) return {std::nullopt, 1'000'000, 0, true};
 		if (interval_ns != interval_ns_) {
 			interval_ns_ = interval_ns;
 			next_tick_ns_ = 0;
 		}
+
 		// Allow small event-loop jitter around a refresh boundary, without
 		// resetting phase and drifting by a full timer millisecond each frame.
 		const uint64_t tolerance = std::min<uint64_t>(200'000, interval_ns / 20);
 		if (next_tick_ns_ > now_ns && next_tick_ns_ - now_ns > tolerance) {
 			return {std::nullopt, next_tick_ns_ - now_ns, 0};
 		}
+
+		// Before the refresh deadline there is no need to retry GPU admission.
+		if (!can_schedule())
+			return {std::nullopt, 1'000'000, 0, true};
+
 		if (next_tick_ns_ == 0) {
 			next_tick_ns_ = now_ns + interval_ns;
 		} else if (now_ns >= next_tick_ns_) {
@@ -48,6 +52,7 @@ public:
 		} else {
 			next_tick_ns_ += interval_ns;
 		}
+		
 		// The pacing phase may be just ahead of now after a delayed callback.
 		// Give Flutter a full refresh interval to render, not a near-zero budget.
 		VsyncDispatch dispatch{pending_, 0, now_ns + interval_ns};

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <chrono>
 #include <future>
+#include <deque>
 #include <sys/eventfd.h>
 
 int main() {
@@ -20,16 +21,16 @@ int main() {
 	};
 	publish(1);
 	auto displayed = chain.start_read_slot();
-	int fences[3];
-	for (int i = 0; i < 3; ++i) {
+	int fences[2];
+	for (int i = 0; i < 2; ++i) {
+		assert(chain.can_schedule_frame());
 		fences[i] = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 		assert(fences[i] >= 0);
 		publish(i + 2, dup(fences[i]));
 	}
-	assert(!chain.latest_frame_ready());
+	assert(!chain.can_schedule_frame());
 
-	// Fill all remaining targets with unfinished GPU work. The producer must
-	// wait instead of replacing frame 2 and its fence with another submission.
+	// Even with a spare physical target, two unfinished submissions must stall the producer.
 	std::promise<void> started;
 	auto writer = std::async(std::launch::async, [&] {
 		started.set_value();
@@ -44,21 +45,16 @@ int main() {
 	}
 
 	assert(eventfd_write(fences[0], 1) == 0);
-	assert(writer.wait_for(50ms) == std::future_status::timeout);
-	// Preserve frame 2 for presentation instead of immediately overwriting
-	// the only completed frame newer than the displayed one.
-	assert(chain.start_read_slot()->frame_serial.load() == 2);
-	assert(eventfd_write(fences[1], 1) == 0);
 	assert(writer.wait_for(1s) == std::future_status::ready);
 	auto* target = writer.get();
-	assert(target && *target == 2);
-	*target = 5;
-	// Frame 3 is still available while the writer prepares its next target.
-	assert(chain.start_read_slot()->frame_serial.load() == 3);
+	assert(target && *target == 0); // The spare slot, preserving both submitted images.
+	assert(chain.can_schedule_frame());
+	assert(chain.start_read_slot()->frame_serial.load() == 2);
 	assert(*displayed->buffer == 1);
+	*target = 4;
+	assert(eventfd_write(fences[1], 1) == 0);
 	chain.end_write(damage);
-	assert(chain.latest_frame_ready());
-	assert(chain.start_read_slot()->frame_serial.load() == 5);
+	assert(chain.start_read_slot()->frame_serial.load() == 4);
 	for (int fd : fences) close(fd);
 
 	// Slow secondary output: two old frames are leased and only the latest
@@ -93,28 +89,28 @@ int main() {
 	                     std::make_shared<int>(0), std::make_shared<int>(0)});
 	VsyncScheduler scheduler;
 	scheduler.request(1);
-	assert(slow.start_write()); // Flutter prepares its FBO ahead of the tick.
-	int pending_fd = -1;
-	uint64_t completion = 0, presented_serial = 0;
+	struct Submission { int fd; uint64_t completion; };
+	std::deque<Submission> pending;
+	uint64_t presented_serial = 0;
 	int submitted = 0, advanced = 0;
 	std::shared_ptr<Slot<int>> scanout;
 	constexpr uint64_t interval = 1'000'000'000ull / 144;
 	for (uint64_t now = 1'000'000'000; now < 2'000'000'000; now += 1'000'000) {
-		if (pending_fd != -1 && now >= completion) {
-			assert(eventfd_write(pending_fd, 1) == 0);
-			close(pending_fd);
-			pending_fd = -1;
+		if (!pending.empty() && now >= pending.front().completion) {
+			assert(eventfd_write(pending.front().fd, 1) == 0);
+			close(pending.front().fd);
+			pending.pop_front();
 		}
-		auto dispatch = scheduler.poll(now, interval, slow.latest_frame_ready());
+		auto dispatch = scheduler.poll(now, interval, [&slow] { return slow.can_schedule_frame(); });
 		if (dispatch.baton) {
-			assert(pending_fd == -1); // No unbounded GPU command backlog.
-			pending_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-			assert(pending_fd >= 0);
-			slow.end_write(damage, dup(pending_fd));
-			completion = now + 25'000'000;
-			++submitted;
+			assert(pending.size() < 2);
 			assert(slow.start_write());
-			scheduler.request(submitted + 1);
+			int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+			assert(fd >= 0);
+			slow.end_write(damage, dup(fd));
+			auto start = pending.empty() ? now : pending.back().completion;
+			pending.push_back({fd, start + 25'000'000});
+			scheduler.request(++submitted + 1);
 		}
 		auto frame = slow.start_read_slot();
 		if (frame && frame->is_ready_nonblocking()) {
@@ -125,7 +121,7 @@ int main() {
 			scanout = std::move(frame);
 		}
 	}
-	assert(submitted >= 30 && submitted <= 40);
-	assert(advanced >= 30 && submitted - advanced <= 1);
-	if (pending_fd != -1) close(pending_fd);
+	assert(submitted >= 30 && submitted <= 42);
+	assert(advanced >= 30 && submitted - advanced <= 2);
+	for (auto submission : pending) close(submission.fd);
 }

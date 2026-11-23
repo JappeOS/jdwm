@@ -63,11 +63,14 @@ struct SwapChain {
 	[[nodiscard]] T* start_read();
 	[[nodiscard]] std::shared_ptr<Slot<T>> start_read_slot(bool* latest_pending = nullptr);
 	// Nonblocking GPU admission check for the Wayland-thread vsync scheduler.
-	[[nodiscard]] bool latest_frame_ready();
+	[[nodiscard]] bool can_schedule_frame();
 
 	virtual ~SwapChain();
 
 private:
+	// Allow the CPU to prepare a frame while the GPU finishes its predecessor.
+	// Two outstanding submissions fill that pipeline; further work adds latency.
+	[[nodiscard]] std::shared_ptr<Slot<T>> oldest_at_submission_limit_locked() const;
 	[[nodiscard]] std::shared_ptr<Slot<T>> choose_write_buffer_locked() const;
 };
 

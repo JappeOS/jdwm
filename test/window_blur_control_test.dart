@@ -1,3 +1,4 @@
+import 'package:jdwm/src/util/environment_flag.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,14 @@ import 'package:jdwm/src/ui/common/window_backdrop.dart';
 import 'package:jdwm/src/util/flutter_frame_trace.dart';
 
 void main() {
+  test('diagnostic flags follow the native configuration convention', () {
+    for (final value in [null, '', '0', 'fAlSe', 'OFF', 'No']) {
+      expect(environmentFlagEnabled(value), isFalse);
+    }
+    for (final value in ['1', 'true', 'on', 'yes', '01', 'other']) {
+      expect(environmentFlagEnabled(value), isTrue);
+    }
+  });
   testWidgets('diagnostic blur control preserves content and theme updates',
       (tester) async {
     final contentKey = GlobalKey();

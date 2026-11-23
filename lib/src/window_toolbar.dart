@@ -74,12 +74,16 @@ class DefaultWindowToolbar extends StatelessWidget {
         final manager = WindowManager.of(context);
         final windows = hierarchy.entriesByFocus;
         final backendViewId = entry.backendViewId;
+        
         if (backendViewId != null) {
           final container = _backendContainer(context);
           container
               ?.read(xdgToplevelStatesProvider(backendViewId).notifier)
-              .requestVisible(false);
+              .requestMinimize();
+        } else {
+          entry.minimized = true;
         }
+
         if (windows.length > 1) {
           final next = windows[windows.length - 2];
           if (manager != null) {

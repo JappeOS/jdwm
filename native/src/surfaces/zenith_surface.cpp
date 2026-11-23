@@ -11,7 +11,10 @@
 #include "util/wlr/xdg_surface_get_visible_bounds.hpp"
 #include "util/wlr/scoped_wlr_buffer.hpp"
 #include "util/egl/egl_extensions.hpp"
+#include "util/egl/native_fence.hpp"
 #include "util/egl/gl_context_lock.hpp"
+#include "util/duplicate_fd.hpp"
+#include "util/fence_diagnostics.hpp"
 #include <EGL/eglext.h>
 
 extern "C" {
@@ -40,6 +43,15 @@ ZenithSurface::ZenithSurface(wlr_surface* surface) : surface{surface}, id{next_v
 
 	new_subsurface.notify = zenith_subsurface_create;
 	wl_signal_add(&surface->events.new_subsurface, &new_subsurface);
+
+	// wlroots sends unmap for each surface, including child subsurfaces.
+	unmap.notify = [](wl_listener* listener, void*) {
+		ZenithSurface* view = wl_container_of(listener, view, unmap);
+		auto* seat = ZenithServer::instance()->seat;
+		if (seat && seat->pointer_state.focused_surface == view->surface)
+			wlr_seat_pointer_notify_clear_focus(seat);
+	};
+	wl_signal_add(&surface->events.unmap, &unmap);
 
 	destroy.notify = zenith_surface_destroy;
 	wl_signal_add(&surface->events.destroy, &destroy);
@@ -283,25 +295,31 @@ void zenith_surface_destroy(wl_listener* listener, void* data) {
 	// wlroots 0.19 asserts all listener lists are empty after destroy.
 	wl_list_remove(&zenith_surface->commit.link);
 	wl_list_remove(&zenith_surface->new_subsurface.link);
+	wl_list_remove(&zenith_surface->unmap.link);
 	wl_list_remove(&zenith_surface->destroy.link);
 
-	server->surface_buffer_chains.erase(zenith_surface->id);
+	const bool had_texture = server->surface_buffer_chains.erase(zenith_surface->id) != 0;
 	for (auto it = server->pending_surface_commits.begin(); it != server->pending_surface_commits.end();) {
 		if (it->second->message->view_id == zenith_surface->id)
 			it = server->pending_surface_commits.erase(it);
 		else ++it;
 	}
-	if (server->embedder_state)
+
+	if (had_texture && server->embedder_state) {
 		server->embedder_state->external_textures.surface_destroyed(zenith_surface->id);
+		if (!server->is_shutting_down())
+			server->embedder_state->notify_texture_destroyed(zenith_surface->id);
+	}
+
 	bool erased = server->surfaces.erase(zenith_surface->id);
 	assert(erased);
-	// TODO: Send destroy to Flutter.
 }
 
 int extract_sync_fd_from_dma_buf(wlr_buffer* buffer, const wlr_dmabuf_attributes& dmabuf_attributes) {
 	if (dmabuf_attributes.n_planes <= 0) {
 		return -1;
 	}
+
 	// All planes should have the same fd.
 	int dma_fd = dmabuf_attributes.fd[0];
 
@@ -310,10 +328,14 @@ int extract_sync_fd_from_dma_buf(wlr_buffer* buffer, const wlr_dmabuf_attributes
 		  .flags = DMA_BUF_SYNC_READ,
 		  .fd = -1,
 	};
+
 	int ret = drmIoctl(dma_fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &sync_file);
 	if (ret != 0) {
+		static zenith::diagnostics::FenceFailures failures;
+		failures.record("dma-buf-export-sync-file", errno, 0, dma_fd);
 		return -1;
 	}
+
 	int sync_fd = sync_file.fd;
 	return sync_fd;
 }
@@ -335,11 +357,14 @@ int dup_dmabuf_wait_fd(const wlr_dmabuf_attributes& dmabuf_attributes) {
 		}
 	}
 
-	int duplicated = fcntl(dma_fd, F_DUPFD_CLOEXEC, 0);
+	int duplicated = zenith::duplicate_cloexec(dma_fd);
 	if (duplicated != -1) {
 		return duplicated;
 	}
-	return dup(dma_fd);
+
+	static zenith::diagnostics::FenceFailures fcntl_failures;
+	fcntl_failures.record("F_DUPFD_CLOEXEC", errno, 0, dma_fd);
+	return -1;
 }
 
 // https://registry.khronos.org/EGL/extensions/ANDROID/EGL_ANDROID_native_fence_sync.txt
@@ -352,11 +377,6 @@ int extract_fd_from_native_fence(EGLSyncKHR* sync_out) {
 		return -1;
 	}
 
-	EGLint attrib_list[] = {
-		  EGL_SYNC_NATIVE_FENCE_FD_ANDROID, EGL_NO_NATIVE_FENCE_FD_ANDROID,
-		  EGL_NONE,
-	};
-
 	zenith::egl::TryGlContextGuard gl_guard;
 	if (!gl_guard.owns_lock()) {
 		*sync_out = EGL_NO_SYNC_KHR;
@@ -364,30 +384,12 @@ int extract_fd_from_native_fence(EGLSyncKHR* sync_out) {
 	}
 
 	wlr_egl* egl = wlr_gles2_renderer_get_egl(ZenithServer::instance()->renderer);
-	wlr_egl_make_current(egl, NULL);
-
-	EGLSyncKHR sync = eglCreateSyncKHR(wlr_egl_get_display(egl), EGL_SYNC_NATIVE_FENCE_ANDROID, attrib_list);
-
-	auto error = [&] {
-		if (sync != EGL_NO_SYNC_KHR) {
-			eglDestroySyncKHR(wlr_egl_get_display(egl), sync);
-		}
+	if (!egl || !wlr_egl_make_current(egl, nullptr)) {
 		*sync_out = EGL_NO_SYNC_KHR;
 		return -1;
-	};
-
-	if (sync == EGL_NO_SYNC_KHR) {
-		return error();
 	}
-	glFlush();
-
-	int fence_fd = eglDupNativeFenceFDANDROID(wlr_egl_get_display(egl), sync);
-	if (fence_fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) {
-		return error();
-	}
-
-	*sync_out = sync;
-	return fence_fd;
+	
+	return export_native_fence(wlr_egl_get_display(egl), sync_out);
 }
 
 void commit_surface(SurfaceCommitMessage* commit_message) {
@@ -479,7 +481,8 @@ void schedule_buffer_commit_on_fd(int fd, std::unique_ptr<SurfaceCommitMessage> 
 	}, key);
 
 	if (!pending->source) {
-		wlr_log(WLR_ERROR, "zenith: failed to watch client buffer fence");
+		static zenith::diagnostics::FenceFailures failures;
+		failures.record("watch-client-fence", errno, 0, fd);
 		return;
 	}
 

@@ -7,14 +7,12 @@ import 'package:shadcn_flutter/shadcn_flutter.dart' as shadcn;
 import 'package:jdwm/src/window_manager.dart';
 import 'package:jdwm/src/window_metadata.dart';
 import 'package:jdwm/src/ui/common/xdg_toplevel_surface.dart';
-import 'package:visibility_detector/visibility_detector.dart';
 
 void main() {
   for (final protocol in ['xdg', 'xwayland']) {
     testWidgets(
         '$protocol metadata updates inventory and does not resurrect unmapped windows',
         (tester) async {
-      VisibilityDetectorController.instance.updateInterval = Duration.zero;
       final calls = <MethodCall>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('platform'), (call) async {

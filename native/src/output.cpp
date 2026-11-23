@@ -454,14 +454,17 @@ void output_frame(wl_listener* listener, void* data) {
 		zenith::render::FrameTimingScope commit_timer("scene-commit", output->wlr_output->name);
 		output_committed = wlr_scene_output_commit(output->scene_output, nullptr);
 	}
+
 	if (!output_committed) {
 		// If committing fails for some reason, manually schedule a new frame, otherwise rendering stops completely.
 		// After 1 ms because if we do it right away, it will saturate the event loop and no other
 		// tasks will execute.
-		std::cerr << "commit failed" << std::endl;
+		output->commit_failures.record("scene-output-commit", 0, 0, -1, output->wlr_output->name);
 		wl_event_source_timer_update(output->schedule_frame_timer, 1);
 		return;
 	}
+
+	output->commit_failures.count = 0;
 	output->last_scene_buffer = source_wlr_buffer;
 	output->scene_commit_pending = false;
 	output->cursor_frame_pending = false;
@@ -527,12 +530,13 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 	auto chain = server->output_manager->composition_source_swap_chain();
 	if (!chain)
 		return 0;
-	const bool frame_ready = chain->latest_frame_ready();
+
 	auto dispatch = embedder_state->poll_vsync(
-		now, zenith::render::output_frame_interval_ns(timing_output), frame_ready);
+		now, zenith::render::output_frame_interval_ns(timing_output), *chain);
 	if (dispatch.delay_ns != 0 || dispatch.baton.has_value()) {
 		zenith::render::trace_frame_sample("vsync-backpressure", driver->wlr_output->name, 0, dispatch.gpu_blocked);
 	}
+
 	if (dispatch.delay_ns != 0) {
 		// A no-damage output callback can run immediately at event-loop idle.
 		// Keep the baton pending until both refresh pacing and GPU admission
@@ -545,6 +549,7 @@ int vsync_callback(void* data, struct wlr_output* timing_output) {
 		zenith::render::trace_frame_sample("vsync-request", driver->wlr_output->name, 0, false);
 		embedder_state->on_vsync(*dispatch.baton, now, dispatch.target_ns);
 	}
+	
 	return 0;
 }
 

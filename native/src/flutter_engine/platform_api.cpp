@@ -66,12 +66,23 @@ static void update_toplevel_geometry_cache(
 
 	auto existing = server->toplevel_geometries.find(view_id);
 	if (request.has_x && request.has_y) {
+		const bool moved = existing == server->toplevel_geometries.end() ||
+			existing->second.x != static_cast<int>(request.requested_x) ||
+			existing->second.y != static_cast<int>(request.requested_y);
+
 		server->toplevel_geometries.insert_or_assign(view_id, wlr_box{
 			.x = static_cast<int>(request.requested_x),
 			.y = static_cast<int>(request.requested_y),
 			.width = request.width,
 			.height = request.height,
 		});
+
+		if (moved) {
+			auto parent = server->xdg_toplevels.find(view_id);
+			if (parent != server->xdg_toplevels.end())
+				update_popup_children(parent->second->xdg_toplevel->base);
+		}
+
 		return;
 	}
 
@@ -164,7 +175,10 @@ void pointer_hover(ZenithServer* server,
 			zenith::xwayland_input::log_missing_surface_debug(view_id, x, y);
 			return;
 		}
+		
 		ZenithSurface* view = view_it->second.get();
+		if (!view->surface->mapped)
+			return; // A hover may be queued across unmap.
 
 		double local_x = x;
 		double local_y = y;
@@ -221,18 +235,6 @@ void pointer_exit(ZenithServer* server,
 		wlr_seat_pointer_notify_clear_focus(server->seat);
 		zenith::xwayland_input::log_pointer_focus_debug("after-clear-focus", server, 0, nullptr, 0.0, 0.0, false, false);
 		server_update_pointer_constraint(server);
-		if (server->pointer != nullptr) {
-			if (zenith_cursor_debug_enabled()) {
-				wlr_log(
-					WLR_INFO,
-					"zenith:cursor pointer_exit restore compositor visible=%d forced_hidden=%d current=%s",
-					server->pointer->is_visible() ? 1 : 0,
-					server->pointer->is_forced_hidden() ? 1 : 0,
-					server->pointer->current_cursor_name()
-				);
-			}
-			server->pointer->restore_compositor_cursor();
-		}
 	});
 	result->Success();
 }

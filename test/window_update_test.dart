@@ -10,7 +10,6 @@ import 'package:jdwm/src/window_hierarchy.dart';
 import 'package:jdwm/src/window_manager.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/ui/common/xdg_toplevel_surface.dart';
-import 'package:visibility_detector/visibility_detector.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
 
 WindowEntry entry() => WindowEntry(
@@ -23,7 +22,6 @@ void main() {
   for (final protocol in ['xdg', 'xwayland']) {
     testWidgets('$protocol fullscreen events resize to full monitor bounds',
         (tester) async {
-      VisibilityDetectorController.instance.updateInterval = Duration.zero;
       final calls = <MethodCall>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('platform'), (call) async {
@@ -149,7 +147,6 @@ void main() {
 
   testWidgets('backend focus activates once and restores after an overlay',
       (tester) async {
-    VisibilityDetectorController.instance.updateInterval = Duration.zero;
     final calls = <MethodCall>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         const MethodChannel('platform'), (call) async {

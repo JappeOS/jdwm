@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
-import 'package:jdwm/src/input/mouse_button_tracker.dart';
 import 'package:jdwm/src/input/pointer_focus_manager.dart';
 
 /// Handles all input events for a given window or popup, and redirects them to the platform which will then be
@@ -25,8 +24,22 @@ class ViewInputListener extends ConsumerStatefulWidget {
 }
 
 class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
-  late final pointerFocusManager = ref.read(pointerFocusManagerProvider);
-  late final mouseButtonTracker = ref.read(mouseButtonTrackerProvider);
+  late final PointerFocusManager pointerFocusManager;
+
+  RenderBox get _surfaceBox => context.findRenderObject()! as RenderBox;
+
+  @override
+  void initState() {
+    super.initState();
+    pointerFocusManager = ref.read(pointerFocusManagerProvider);
+  }
+
+  @override
+  void dispose() {
+    // Flutter omits MouseRegion.onExit when the region itself is unmounted.
+    pointerFocusManager.removeSurface(widget.viewId);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +96,10 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
               _onPointerUp(event);
               return GestureDisposition.accepted;
             },
-            onPointerCancel: (_, __) {
+            onPointerCancel: (event, _) {
+              if (event.kind == PointerDeviceKind.mouse) {
+                pointerFocusManager.releaseButtons(widget.viewId);
+              }
               return GestureDisposition.rejected;
             },
             onLose: _onLoseArena,
@@ -91,12 +107,22 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
               onPointerHover: (PointerHoverEvent event) {
                 if (event.kind == PointerDeviceKind.mouse) {
                   var position = event.localPosition + eventRegion.topLeft;
-                  _pointerMoved(position);
+                  pointerFocusManager.hover(
+                      widget.viewId, position, event.position);
                 }
               },
               child: MouseRegion(
-                onEnter: (_) => pointerFocusManager.enterSurface(),
-                onExit: (_) => pointerFocusManager.exitSurface(),
+                onEnter: (event) {
+                  if (event.kind == PointerDeviceKind.mouse) {
+                    pointerFocusManager.enterSurface(
+                        widget.viewId, _surfaceBox, event.position);
+                  }
+                },
+                onExit: (event) {
+                  if (event.kind == PointerDeviceKind.mouse) {
+                    pointerFocusManager.exitSurface(widget.viewId);
+                  }
+                },
               ),
             ),
           ),
@@ -115,39 +141,35 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
   }
 
   Future<void> _onPointerDown(
-      PointerEvent event, Offset inputRegionTopLeft) async {
-    var position = event.localPosition + inputRegionTopLeft;
-
+    PointerEvent event,
+    Offset inputRegionTopLeft,
+  ) async {
     if (event.kind == PointerDeviceKind.mouse) {
-      await _pointerMoved(position);
-      await _sendMouseButtonsToPlatform(event.buttons);
-      pointerFocusManager.startPotentialDrag();
+      pointerFocusManager.press(
+          widget.viewId, _surfaceBox, event.position, event.buttons);
     } else if (event.kind == PointerDeviceKind.touch) {
-      await ref
-          .read(platformApiProvider.notifier)
-          .touchDown(widget.viewId, event.pointer, position);
+      await ref.read(platformApiProvider.notifier).touchDown(widget.viewId,
+          event.pointer, event.localPosition + inputRegionTopLeft);
     }
   }
 
   Future<void> _onPointerMove(
-      PointerEvent event, Offset inputRegionTopLeft) async {
-    var position = event.localPosition + inputRegionTopLeft;
-
+    PointerEvent event,
+    Offset inputRegionTopLeft,
+  ) async {
     if (event.kind == PointerDeviceKind.mouse) {
       // If a button is being pressed while another one is already down, it's considered a move event, not a down event.
-      await _sendMouseButtonsToPlatform(event.buttons);
-      await _pointerMoved(position);
+      pointerFocusManager.drag(widget.viewId, event.position, event.buttons);
     } else if (event.kind == PointerDeviceKind.touch) {
       await ref
           .read(platformApiProvider.notifier)
-          .touchMotion(event.pointer, position);
+          .touchMotion(event.pointer, event.localPosition + inputRegionTopLeft);
     }
   }
 
   Future<void> _onPointerUp(PointerUpEvent event) async {
     if (event.kind == PointerDeviceKind.mouse) {
-      await _sendMouseButtonsToPlatform(event.buttons);
-      pointerFocusManager.stopPotentialDrag();
+      pointerFocusManager.releaseButtons(widget.viewId, event.position);
     } else if (event.kind == PointerDeviceKind.touch) {
       await ref.read(platformApiProvider.notifier).touchUp(event.pointer);
     }
@@ -155,30 +177,11 @@ class _ViewInputListenerState extends ConsumerState<ViewInputListener> {
 
   void _onLoseArena(PointerEvent lastPointerEvent) async {
     if (lastPointerEvent.kind == PointerDeviceKind.mouse) {
-      await _sendMouseButtonsToPlatform(0);
-      pointerFocusManager.stopPotentialDrag();
+      pointerFocusManager.releaseButtons(widget.viewId);
     } else if (lastPointerEvent.kind == PointerDeviceKind.touch) {
       await ref
           .read(platformApiProvider.notifier)
           .touchCancel(lastPointerEvent.pointer);
     }
-  }
-
-  Future<void> _sendMouseButtonsToPlatform(int buttons) async {
-    MouseButtonEvent? e = mouseButtonTracker.trackButtonState(buttons);
-    if (e != null) {
-      await _mouseButtonEvent(e);
-    }
-  }
-
-  Future<void> _mouseButtonEvent(MouseButtonEvent event) {
-    return ref.read(platformApiProvider.notifier).sendMouseButtonEventToView(
-        event.button, event.state == MouseButtonState.pressed);
-  }
-
-  Future<void> _pointerMoved(Offset position) {
-    return ref
-        .read(platformApiProvider.notifier)
-        .pointerHoversView(widget.viewId, position);
   }
 }

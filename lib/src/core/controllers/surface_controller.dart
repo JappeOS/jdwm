@@ -11,7 +11,7 @@ class SurfaceSnapshot {
   final Rect bufferSourceBox;
   final Size bufferSize;
   final GlobalKey widgetKey;
-  final GlobalKey textureKey;
+  final LayerLink popupAnchor;
   final List<int> subsurfacesBelow;
   final List<int> subsurfacesAbove;
   final Rect inputRegion;
@@ -27,7 +27,7 @@ class SurfaceSnapshot {
     required this.bufferSourceBox,
     required this.bufferSize,
     required this.widgetKey,
-    required this.textureKey,
+    required this.popupAnchor,
     required this.subsurfacesBelow,
     required this.subsurfacesAbove,
     required this.inputRegion,
@@ -70,7 +70,7 @@ class SurfaceController {
     required int viewId,
     required SurfaceRole role,
     required GlobalKey widgetKey,
-    required GlobalKey textureKey,
+    required LayerLink popupAnchor,
   }) {
     return SurfaceSnapshot(
       role: role,
@@ -82,7 +82,7 @@ class SurfaceController {
       bufferSourceBox: Rect.zero,
       bufferSize: Size.zero,
       widgetKey: widgetKey,
-      textureKey: textureKey,
+      popupAnchor: popupAnchor,
       subsurfacesBelow: const <int>[],
       subsurfacesAbove: const <int>[],
       inputRegion: Rect.zero,
@@ -100,7 +100,7 @@ class SurfaceController {
       bufferSourceBox: data.bufferSourceBox,
       bufferSize: data.bufferSize,
       widgetKey: state.widgetKey,
-      textureKey: state.textureKey,
+      popupAnchor: state.popupAnchor,
       subsurfacesBelow: data.subsurfacesBelow,
       subsurfacesAbove: data.subsurfacesAbove,
       inputRegion: data.inputRegion,

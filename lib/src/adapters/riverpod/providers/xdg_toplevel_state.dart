@@ -64,7 +64,11 @@ class XdgToplevelStates extends _$XdgToplevelStates {
     );
   }
 
-  void requestVisible(bool value) {
+  void requestMinimize() => _requestVisible(false);
+
+  void requestRestore() => _requestVisible(true);
+
+  void _requestVisible(bool value) {
     if (value != state.visible) {
       ref
           .read(platformApiProvider.notifier)

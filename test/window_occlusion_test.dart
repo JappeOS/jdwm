@@ -2,6 +2,9 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:jdwm/src/ui/common/xdg_toplevel_surface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jdwm/src/ui/common/window_backdrop.dart';
 import 'package:jdwm/src/ui/common/window_occlusion_stack.dart';
@@ -9,6 +12,85 @@ import 'package:jdwm/src/util/window_occlusion.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as shadcn;
 
 void main() {
+  testWidgets('covering and revealing a client never requests minimization',
+      (tester) async {
+    final visibilityChanges = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('platform'), (call) async {
+      if (call.method == 'change_window_visibility') visibilityChanges.add(call);
+      return null;
+    });
+    final keys = [GlobalKey(), GlobalKey()];
+    Widget window(int index, Rect rect, Widget content) => Positioned.fill(
+          child: WindowPaintBoundary(
+            child: Stack(children: [
+              Positioned.fromRect(
+                rect: rect,
+                child: WindowBackdrop(
+                  sigma: 0,
+                  radius: BorderRadius.zero,
+                  contentKey: keys[index],
+                  opaqueRect: Offset.zero & rect.size,
+                  child: RepaintBoundary(key: keys[index], child: content),
+                ),
+              ),
+            ]),
+          ),
+        );
+
+    Future<void> show(Rect front) async {
+      await tester.pumpWidget(ProviderScope(
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: WindowOcclusionStack(contentKeys: keys, children: [
+            window(0, const Rect.fromLTWH(200, 200, 120, 100),
+                const XdgToplevelSurface(key: ValueKey(1), viewId: 1)),
+            window(1, front, const ColoredBox(color: Color(0xff123456))),
+          ]),
+        ),
+      ));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+    }
+
+    const restored = Rect.fromLTWH(500, 0, 200, 150);
+    await show(restored);
+    await show(const Rect.fromLTWH(0, 0, 800, 600));
+    await show(restored);
+    expect(visibilityChanges, isEmpty);
+  });
+
+  testWidgets('desktop overlay animation reuses the window stack layer',
+      (tester) async {
+    final color = ValueNotifier(const Color(0xff001122));
+    addTearDown(color.dispose);
+    final painter = _PaintCounter();
+    await tester.pumpWidget(Directionality(
+      textDirection: TextDirection.ltr,
+      child: Stack(children: [
+        WindowOcclusionStack(contentKeys: const [
+          null
+        ], children: [
+          SizedBox.expand(child: CustomPaint(painter: painter)),
+        ]),
+        Positioned(
+          width: 40,
+          height: 40,
+          child: ValueListenableBuilder<Color>(
+            valueListenable: color,
+            builder: (_, value, __) => ColoredBox(color: value),
+          ),
+        ),
+      ]),
+    ));
+    expect(painter.paints, 1);
+    for (int frame = 1; frame <= 10; frame++) {
+      color.value = Color(0xff001122 + frame);
+      await tester.pump();
+    }
+    expect(painter.paints, 1);
+  });
+
   testWidgets('30 windows skip covered paints and reveal retained content',
       (tester) async {
     final keys = List.generate(30, (_) => GlobalKey());

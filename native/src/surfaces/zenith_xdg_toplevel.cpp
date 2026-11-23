@@ -206,7 +206,11 @@ void ZenithXdgToplevel::maximize(bool value) const {
 }
 
 void ZenithXdgToplevel::resize(size_t width, size_t height) const {
-	if (xdg_toplevel->base->initialized) {
+	// Moving an XDG window only changes compositor-local coordinates.
+	// wlroots schedules a configure even when set_size repeats the same size.
+	const auto& scheduled = xdg_toplevel->scheduled;
+	if (xdg_toplevel->base->initialized &&
+	    (scheduled.width != static_cast<int32_t>(width) || scheduled.height != static_cast<int32_t>(height))) {
 		wlr_xdg_toplevel_set_size(xdg_toplevel, width, height);
 	}
 }

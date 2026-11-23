@@ -1,3 +1,5 @@
+#include "util/environment.hpp"
+#include "util/fence_diagnostics.hpp"
 #include "embedder_callbacks.hpp"
 #include "embedder_state.hpp"
 #include "server.hpp"
@@ -7,6 +9,7 @@
 #include "output/frame_timing_trace.hpp"
 #include "output/flutter_damage_policy.hpp"
 #include "util/egl/egl_extensions.hpp"
+#include "util/egl/native_fence.hpp"
 #include "util/egl/gl_context_lock.hpp"
 
 extern "C" {
@@ -39,12 +42,8 @@ static int create_frame_ready_fence_fd() {
 	if (server == nullptr || server->renderer == nullptr) {
 		return -1;
 	}
+
 	if (zenith::egl::gl_context_serialization_enabled()) {
-		return -1;
-	}
-	if (eglCreateSyncKHR == nullptr ||
-	    eglDestroySyncKHR == nullptr ||
-	    eglDupNativeFenceFDANDROID == nullptr) {
 		return -1;
 	}
 
@@ -53,20 +52,7 @@ static int create_frame_ready_fence_fd() {
 		return -1;
 	}
 
-	EGLDisplay display = wlr_egl_get_display(egl);
-	const EGLint attribs[] = {EGL_NONE};
-	EGLSyncKHR sync = eglCreateSyncKHR(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
-	if (sync == EGL_NO_SYNC_KHR) {
-		return -1;
-	}
-
-	glFlush();
-	int fence_fd = eglDupNativeFenceFDANDROID(display, sync);
-	eglDestroySyncKHR(display, sync);
-	if (fence_fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) {
-		return -1;
-	}
-	return fence_fd;
+	return export_native_fence(wlr_egl_get_display(egl));
 }
 
 bool flutter_make_current(void* userdata) {
@@ -201,17 +187,24 @@ void flutter_vsync_callback(void* userdata, intptr_t baton) {
 	}
 }
 
-bool flutter_gl_external_texture_frame_callback(void* userdata, int64_t texture_id, size_t width, size_t height,
-                                                FlutterOpenGLTexture* texture_out) {
+bool flutter_gl_external_texture_frame_callback(
+	void* userdata,
+	int64_t texture_id,
+	size_t width,
+	size_t height,
+	FlutterOpenGLTexture* texture_out
+) {
 	zenith::render::trace_frame_sample("texture-resolve", "flutter", 0);
 	auto* state = static_cast<EmbedderState*>(userdata);
+
 	// Snapshot acquisition does not wait for the Wayland event loop. Each
 	// frame owns its buffer until Flutter releases this particular image.
 	auto frame = state->external_textures.acquire(texture_id);
 	if (!frame) {
 		return false;
 	}
-	static const bool trace_textures = std::getenv("ZENITH_TRACE_TEXTURES") != nullptr;
+
+	static const bool trace_textures = zenith::config::flag_enabled("ZENITH_TRACE_TEXTURES");
 	if (trace_textures) {
 		wlr_log(WLR_INFO,
 		        "zenith:texture id=%lld name=%u target=0x%x buffer=%zux%zu requested=%zux%zu shared=%d",

@@ -12,8 +12,6 @@ void main() {
     final crop = backendManagedSurfaceRect(
       surfaceSize: surface,
       visibleBounds: geometry,
-      bufferSourceBox: Offset.zero & surface,
-      bufferSize: surface,
     );
     const viewportKey = ValueKey('viewport');
     const contentKey = ValueKey('content');
@@ -43,40 +41,11 @@ void main() {
     expect(tester.getSize(find.byKey(viewportKey)), geometry.size);
   });
 
-  test('window geometry stays authoritative for scaled and cropped buffers',
-      () {
-    for (final source in [
-      const Rect.fromLTWH(0, 0, 1600, 1200),
-      const Rect.fromLTWH(100, 80, 1600, 1200),
-    ]) {
-      expect(
-        backendManagedSurfaceRect(
-          surfaceSize: surface,
-          visibleBounds: geometry,
-          bufferSourceBox: source,
-          bufferSize: const Size(1800, 1400),
-        ),
-        geometry,
-      );
-      expect(
-        backendUsesSurfaceDestinationSize(
-          surfaceSize: surface,
-          visibleBounds: geometry,
-          bufferSourceBox: source,
-          bufferSize: const Size(1800, 1400),
-        ),
-        isFalse,
-      );
-    }
-  });
-
   test('surfaces without window geometry use their destination size', () {
     expect(
       backendManagedSurfaceRect(
         surfaceSize: surface,
         visibleBounds: Rect.zero,
-        bufferSourceBox: const Rect.fromLTWH(100, 80, 1600, 1200),
-        bufferSize: const Size(1800, 1400),
       ),
       Offset.zero & surface,
     );

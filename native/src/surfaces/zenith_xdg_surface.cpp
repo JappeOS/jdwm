@@ -4,27 +4,10 @@
 #include "binary_messenger.hpp"
 #include "server.hpp"
 #include "assert.hpp"
-#include "cursor_debug.hpp"
 #include "output/zenith_output_manager.hpp"
 
 extern "C" {
 #include <wlr/util/log.h>
-}
-
-static bool pointer_focus_belongs_to_surface(
-	ZenithServer* server,
-	wlr_surface* surface
-) {
-	if (server == nullptr || surface == nullptr) {
-		return false;
-	}
-	wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
-	if (focused_surface == nullptr) {
-		return false;
-	}
-	// Xwayland shares one wl_client across all X11 windows. Only clear
-	// focus for this surface (or one of its subsurfaces), not another window.
-	return wlr_surface_get_root_surface(focused_surface) == surface;
 }
 
 ZenithXdgSurface::ZenithXdgSurface(wlr_xdg_surface* xdg_surface, std::shared_ptr<ZenithSurface> zenith_surface)
@@ -46,6 +29,12 @@ ZenithXdgSurface::~ZenithXdgSurface() {
 
 static std::shared_ptr<ZenithXdgSurface> register_xdg_surface(ZenithServer* server, wlr_xdg_surface* xdg_surface) {
 	auto* zenith_surface = static_cast<ZenithSurface*>(xdg_surface->surface->data);
+
+	// The client can create a new popup role on the same xdg_surface.
+	auto existing = server->xdg_surfaces.find(zenith_surface->id);
+	if (existing != server->xdg_surfaces.end())
+		return existing->second;
+
 	const std::shared_ptr<ZenithSurface>& zenith_surface_ref = server->surfaces.at(zenith_surface->id);
 
 	auto* zenith_xdg_surface = new ZenithXdgSurface(xdg_surface, zenith_surface_ref);
@@ -72,8 +61,7 @@ void zenith_xdg_popup_create(wl_listener* listener, void* data) {
 	auto* popup = static_cast<wlr_xdg_popup*>(data);
 	auto zenith_xdg_surface_ref = register_xdg_surface(server, popup->base);
 	size_t id = zenith_xdg_surface_ref->zenith_surface->id;
-	auto zenith_popup = new ZenithXdgPopup(popup, zenith_xdg_surface_ref);
-	server->xdg_popups.insert(std::make_pair(id, zenith_popup));
+	server->xdg_popups.emplace(id, std::make_unique<ZenithXdgPopup>(popup, zenith_xdg_surface_ref));
 }
 
 void zenith_xdg_surface_map(wl_listener* listener, void* data) {
@@ -115,13 +103,6 @@ void zenith_xdg_surface_unmap(wl_listener* listener, void* data) {
 		}
 	}
 
-	if (pointer_focus_belongs_to_surface(server, zenith_xdg_surface->xdg_surface->surface)) {
-		if (zenith_cursor_debug_enabled()) {
-			wlr_log(WLR_INFO, "zenith:cursor xdg_unmap clear pointer focus by surface match id=%zu", id);
-		}
-		wlr_seat_pointer_notify_clear_focus(server->seat);
-	}
-
 	if (server->window_metadata)
 		server->window_metadata->unmap(id);
 
@@ -147,13 +128,6 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 		}
 	}
 
-	if (pointer_focus_belongs_to_surface(server, zenith_xdg_surface->xdg_surface->surface)) {
-		if (zenith_cursor_debug_enabled()) {
-			wlr_log(WLR_INFO, "zenith:cursor xdg_destroy clear pointer focus by surface match id=%zu", id);
-		}
-		wlr_seat_pointer_notify_clear_focus(server->seat);
-	}
-
 	if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {
 		if (server->window_metadata)
 			server->window_metadata->forget(id);
@@ -162,10 +136,8 @@ void zenith_xdg_surface_destroy(wl_listener* listener, void* data) {
 		assert(erased);
 		erased = server->toplevels.erase(id);
 		assert(erased);
-	} else if (zenith_xdg_surface->xdg_surface->role == WLR_XDG_SURFACE_ROLE_POPUP) {
-		bool erased = server->xdg_popups.erase(id);
-		assert(erased);
 	}
+	
 	bool erased = server->xdg_surfaces.erase(id);
 	assert(erased);
 }

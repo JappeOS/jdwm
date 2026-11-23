@@ -67,7 +67,7 @@ int main() {
 	SwapChain<int> recycling(buffers);
 	int delayed = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 	assert(delayed >= 0);
-	for (int value = 1; value <= 4; ++value) {
+	for (int value = 1; value <= 3; ++value) {
 		assert(recycling.start_write());
 		recycling.end_write(damage, value == 1 ? -1 : dup(delayed));
 	}

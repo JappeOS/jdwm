@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <array>
 #include "damage_history.hpp"
+#include "util/environment.hpp"
 
 extern "C" {
 #include <wlr/util/log.h>
@@ -15,10 +16,7 @@ extern "C" {
 namespace zenith::render {
 
 inline bool frame_timing_enabled() {
-	static const bool enabled = [] {
-		const char* value = std::getenv("ZENITH_TRACE_FRAME_TIMING");
-		return value != nullptr && value[0] != '\0' && value[0] != '0';
-	}();
+	static const bool enabled = zenith::config::flag_enabled("ZENITH_TRACE_FRAME_TIMING");
 	return enabled;
 }
 

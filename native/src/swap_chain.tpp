@@ -8,6 +8,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "util/duplicate_fd.hpp"
+
 extern "C" {
 #include <wlr/render/allocator.h>
 #define static
@@ -104,7 +106,7 @@ int Slot<T>::duplicate_ready_fence() {
 		errno = 0;
 		return -1;
 	}
-	return fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	return zenith::duplicate_cloexec(fd);
 }
 
 template<class T>
@@ -156,22 +158,28 @@ template<class T>
 T* SwapChain<T>::start_write(const StopSignal* stop) {
 	std::unique_lock lock(mutex);
 	for (;;) {
-		if (stop && stop->requested()) return nullptr;
-		write_buffer = choose_write_buffer_locked();
-		write_in_progress = write_buffer != nullptr;
-		if (write_buffer != nullptr) return write_buffer->buffer.get();
+		if (stop && stop->requested())
+			return nullptr;
 
-		// Flutter may already have pipelined work when vsync admission stops.
-		// Bound that work here too: never replace an unfinished slot's fence.
-		std::shared_ptr<Slot<T>> pending;
-		for (const auto& candidate : slots) {
-			if (candidate->is_presented() ||
-			    candidate->ready_fence_fd.load() == -1) continue;
-			if (pending == nullptr || candidate->frame_serial.load() < pending->frame_serial.load()) {
-				pending = candidate;
+		auto pending = oldest_at_submission_limit_locked();
+		if (!pending) {
+			write_buffer = choose_write_buffer_locked();
+			write_in_progress = write_buffer != nullptr;
+			if (write_buffer != nullptr)
+				return write_buffer->buffer.get();
+
+			// Output leases can exhaust available targets even below the GPU limit.
+			for (const auto& candidate : slots) {
+				if (candidate->is_presented() || candidate->ready_fence_fd.load() == -1)
+					continue;
+				if (!pending || candidate->frame_serial.load() < pending->frame_serial.load())
+					pending = candidate;
 			}
 		}
-		if (pending == nullptr) return nullptr; // All remaining buffers are leased.
+
+		if (pending == nullptr)
+			return nullptr; // All remaining buffers are leased.
+
 		// A reader can consume/close the slot's fence while we wait. Own a
 		// duplicate, and release the mutex so output selection never waits on us.
 		int fd = pending->duplicate_ready_fence();
@@ -179,21 +187,46 @@ T* SwapChain<T>::start_write(const StopSignal* stop) {
 			if (errno == 0) continue; // A reader already consumed this fence.
 			return nullptr;
 		}
+
 		lock.unlock();
+
 		pollfd fds[] = {{fd, POLLIN, 0}, {stop ? stop->fd() : -1, POLLIN, 0}};
+
 		int result;
-		do { result = poll(fds, 2, -1); } while (result < 0 && errno == EINTR);
+		do { result = poll(fds, 2, -1); }
+		while (result < 0 && errno == EINTR);
+
 		close(fd);
-		if (result < 0 || fds[1].revents || !(fds[0].revents & POLLIN)) return nullptr;
+
+		if (result < 0 || fds[1].revents || !(fds[0].revents & POLLIN))
+			return nullptr;
+
 		lock.lock();
 		// Re-evaluate both leases and the newest completed frame after waking.
 	}
 }
 
 template<class T>
-bool SwapChain<T>::latest_frame_ready() {
+std::shared_ptr<Slot<T>> SwapChain<T>::oldest_at_submission_limit_locked() const {
+	std::shared_ptr<Slot<T>> oldest;
+	unsigned pending = 0;
+
+	for (const auto& slot : slots) {
+		if (slot->ready_fence_fd.load() == -1 || slot->is_ready_nonblocking())
+			continue;
+		++pending;
+		if (!oldest || slot->frame_serial.load() < oldest->frame_serial.load())
+			oldest = slot;
+	}
+
+	constexpr unsigned max_pending_gpu_frames = 2;
+	return pending >= max_pending_gpu_frames ? oldest : nullptr;
+}
+
+template<class T>
+bool SwapChain<T>::can_schedule_frame() {
 	std::scoped_lock lock(mutex);
-	return latest_buffer == nullptr || latest_buffer->is_ready_nonblocking();
+	return !oldest_at_submission_limit_locked() && choose_write_buffer_locked() != nullptr;
 }
 
 template<class T>

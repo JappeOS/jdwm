@@ -5,7 +5,6 @@
 #include "surfaces/zenith_surface.hpp"
 #include "output/zenith_output_manager.hpp"
 #include "xwayland_debug.hpp"
-#include "cursor_debug.hpp"
 
 extern "C" {
 #include <wlr/util/log.h>
@@ -13,22 +12,6 @@ extern "C" {
 #include <wlr/xwayland/xwayland.h>
 #include <xcb/xproto.h>
 #undef class
-}
-
-static bool pointer_focus_belongs_to_surface(
-	ZenithServer* server,
-	wlr_surface* surface
-) {
-	if (server == nullptr || surface == nullptr) {
-		return false;
-	}
-	wlr_surface* focused_surface = server->seat->pointer_state.focused_surface;
-	if (focused_surface == nullptr) {
-		return false;
-	}
-	// Xwayland shares one wl_client across all X11 windows. Only clear
-	// focus for this surface (or one of its subsurfaces), not another window.
-	return wlr_surface_get_root_surface(focused_surface) == surface;
 }
 
 static int managed_x_for(const ZenithXwaylandToplevel* toplevel) {
@@ -351,12 +334,6 @@ void ZenithXwaylandToplevel::handle_unmap() {
 			if (text_input->wlr_text_input->focused_surface == surface) {
 				text_input->leave();
 			}
-		}
-		if (pointer_focus_belongs_to_surface(server, surface)) {
-			if (zenith_cursor_debug_enabled()) {
-				wlr_log(WLR_INFO, "zenith:cursor xwayland_unmap clear pointer focus by surface match view=%zu", view_id);
-			}
-			wlr_seat_pointer_notify_clear_focus(server->seat);
 		}
 	}
 

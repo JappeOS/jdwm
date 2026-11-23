@@ -6,20 +6,25 @@ part 'mouse_button_tracker.g.dart';
 @Riverpod(keepAlive: true)
 MouseButtonTracker mouseButtonTracker(Ref ref) => MouseButtonTracker();
 
-/// When receiving a pointer event in the Listener widget, we can only have a bitmap of all pressed mouse buttons, and
-/// not the button that has been pressed or released. This class tracks changes between such bitmaps and returns the
-/// difference in the form of a MouseButtonEvent object.
+/// Converts Flutter's pressed-button mask into individual Wayland transitions.
 class MouseButtonTracker {
-  int buttons = 0;
+  int _buttons = 0;
 
-  MouseButtonEvent? trackButtonState(int newButtons) {
-    if (buttons == newButtons) {
-      return null;
+  List<MouseButtonEvent> trackButtonChanges(int buttons) {
+    var changed = _buttons ^ buttons;
+    if (changed == 0) return const [];
+
+    _buttons = buttons;
+    final events = <MouseButtonEvent>[];
+    while (changed != 0) {
+      final button = changed & -changed; // Lowest changed bit.
+      final pressed = (buttons & button) != 0;
+      events.add(MouseButtonEvent(button,
+          pressed ? MouseButtonState.pressed : MouseButtonState.released));
+      changed ^= button;
     }
-    var button = buttons ^ newButtons;
-    var state = newButtons & button != 0 ? MouseButtonState.pressed : MouseButtonState.released;
-    buttons = newButtons;
-    return MouseButtonEvent(button, state);
+    
+    return events;
   }
 }
 

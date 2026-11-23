@@ -566,6 +566,12 @@ void EmbedderState::register_external_texture(int64_t id) {
 	});
 }
 
+void EmbedderState::notify_texture_destroyed(int64_t id) {
+	callable_queue.enqueue([this, id] {
+		platform_method_channel->InvokeMethod("texture_destroyed", std::make_unique<EncodableValue>(id));
+	});
+}
+
 void EmbedderState::mark_external_texture_frame_available(int64_t id) {
 	callable_queue.enqueue([=] {
 		auto result = FlutterEngineMarkExternalTextureFrameAvailable(engine, id);
@@ -584,8 +590,8 @@ void EmbedderState::schedule_frame() {
 	});
 }
 
-VsyncDispatch EmbedderState::poll_vsync(uint64_t now_ns, uint64_t interval_ns, bool frame_ready) {
-	return vsync_scheduler.poll(now_ns, interval_ns, frame_ready);
+VsyncDispatch EmbedderState::poll_vsync(uint64_t now_ns, uint64_t interval_ns, SwapChain<wlr_gles2_buffer>& chain) {
+	return vsync_scheduler.poll(now_ns, interval_ns, [&chain] { return chain.can_schedule_frame(); });
 }
 
 void EmbedderState::set_baton(intptr_t p_baton) {
@@ -754,6 +760,7 @@ void EmbedderState::unmap_xdg_surface(size_t view_id, int role) {
 	callable_queue.enqueue([=] {
 		auto value = std::make_unique<EncodableValue>(EncodableMap{
 			  {EncodableValue("view_id"), EncodableValue((int64_t) view_id)},
+			  {EncodableValue("role"), EncodableValue(role)},
 		});
 		platform_method_channel->InvokeMethod("unmap_xdg_surface", std::move(value));
 		if (role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) {

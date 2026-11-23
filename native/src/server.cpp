@@ -4,6 +4,7 @@
 #include "assert.hpp"
 #include "util/egl/egl_extensions.hpp"
 #include "util/egl/gl_context_lock.hpp"
+#include "util/environment.hpp"
 #include "egl/create_shared_egl_context.hpp"
 #include "zenith_toplevel_decoration.hpp"
 #include "output/output_management.hpp"
@@ -74,41 +75,6 @@ static bool env_equals(const char* env_value, const char* expected) {
 	return env_value != nullptr && expected != nullptr && std::string(env_value) == expected;
 }
 
-static bool equals_ignore_case(const char* value, const char* expected) {
-	if (value == nullptr || expected == nullptr) {
-		return false;
-	}
-	while (*value != '\0' && *expected != '\0') {
-		char a = *value;
-		char b = *expected;
-		if (a >= 'A' && a <= 'Z') {
-			a = (char)(a - 'A' + 'a');
-		}
-		if (b >= 'A' && b <= 'Z') {
-			b = (char)(b - 'A' + 'a');
-		}
-		if (a != b) {
-			return false;
-		}
-		++value;
-		++expected;
-	}
-	return *value == '\0' && *expected == '\0';
-}
-
-static bool env_is_truthy(const char* value) {
-	if (value == nullptr || value[0] == '\0') {
-		return false;
-	}
-	if (equals_ignore_case(value, "0") ||
-	    equals_ignore_case(value, "false") ||
-	    equals_ignore_case(value, "off") ||
-	    equals_ignore_case(value, "no")) {
-		return false;
-	}
-	return true;
-}
-
 static std::string lower_ascii(std::string value) {
 	for (char& c : value) {
 		if (c >= 'A' && c <= 'Z') {
@@ -132,7 +98,7 @@ static bool gl_renderer_string_looks_software(const char* renderer_name) {
 }
 
 static void zenith_configure_drm_stability() {
-	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_MODIFIERS"))) {
+	if (zenith::config::flag_enabled("ZENITH_DRM_NO_MODIFIERS")) {
 		setenv("WLR_DRM_NO_MODIFIERS", "1", 1);
 		wlr_log(
 			WLR_INFO,
@@ -141,18 +107,18 @@ static void zenith_configure_drm_stability() {
 		);
 	}
 
-	if (env_is_truthy(std::getenv("ZENITH_DRM_NO_ATOMIC"))) {
+	if (zenith::config::flag_enabled("ZENITH_DRM_NO_ATOMIC")) {
 		setenv("WLR_DRM_NO_ATOMIC", "1", 1);
 		wlr_log(WLR_INFO, "zenith: forcing WLR_DRM_NO_ATOMIC=1 (ZENITH_DRM_NO_ATOMIC)");
 	}
-
 }
 
 static void zenith_maybe_allow_software_renderer() {
 	if (std::getenv("WLR_RENDERER_ALLOW_SOFTWARE") != nullptr) {
 		return;
 	}
-	if (env_is_truthy(std::getenv("ZENITH_DISABLE_SOFTWARE_RENDERER"))) {
+
+	if (zenith::config::flag_enabled("ZENITH_DISABLE_SOFTWARE_RENDERER")) {
 		wlr_log(
 			WLR_INFO,
 			"zenith: leaving WLR_RENDERER_ALLOW_SOFTWARE unset (ZENITH_DISABLE_SOFTWARE_RENDERER)"
@@ -171,12 +137,13 @@ static void zenith_maybe_allow_software_renderer() {
 }
 
 static void zenith_configure_gl_context_serialization(wlr_renderer* renderer) {
-	if (env_is_truthy(std::getenv("ZENITH_SERIALIZE_GL_CONTEXTS"))) {
+	if (zenith::config::flag_enabled("ZENITH_SERIALIZE_GL_CONTEXTS")) {
 		zenith::egl::set_gl_context_serialization_enabled(true);
 		wlr_log(WLR_INFO, "zenith: serializing EGL/GLES context access (ZENITH_SERIALIZE_GL_CONTEXTS)");
 		return;
 	}
-	if (env_is_truthy(std::getenv("ZENITH_DISABLE_GL_CONTEXT_SERIALIZATION"))) {
+	
+	if (zenith::config::flag_enabled("ZENITH_DISABLE_GL_CONTEXT_SERIALIZATION")) {
 		zenith::egl::set_gl_context_serialization_enabled(false);
 		wlr_log(
 			WLR_INFO,
@@ -296,8 +263,7 @@ static void zenith_preflight_libseat() {
 }
 
 static void zenith_debug_log_loaded_libs() {
-	const char* enabled = std::getenv("ZENITH_DEBUG_LOADED_LIBS");
-	if (enabled == nullptr || std::string(enabled) != "1") {
+	if (!zenith::config::flag_enabled("ZENITH_DEBUG_LOADED_LIBS")) {
 		return;
 	}
 

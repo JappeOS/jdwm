@@ -23,7 +23,7 @@ mixin _$SurfaceState {
   Rect get bufferSourceBox;
   Size get bufferSize;
   GlobalKey get widgetKey;
-  GlobalKey get textureKey;
+  LayerLink get popupAnchor;
   List<int> get subsurfacesBelow;
   List<int> get subsurfacesAbove;
   Rect get inputRegion;
@@ -57,8 +57,8 @@ mixin _$SurfaceState {
                 other.bufferSize == bufferSize) &&
             (identical(other.widgetKey, widgetKey) ||
                 other.widgetKey == widgetKey) &&
-            (identical(other.textureKey, textureKey) ||
-                other.textureKey == textureKey) &&
+            (identical(other.popupAnchor, popupAnchor) ||
+                other.popupAnchor == popupAnchor) &&
             const DeepCollectionEquality()
                 .equals(other.subsurfacesBelow, subsurfacesBelow) &&
             const DeepCollectionEquality()
@@ -81,7 +81,7 @@ mixin _$SurfaceState {
       bufferSourceBox,
       bufferSize,
       widgetKey,
-      textureKey,
+      popupAnchor,
       const DeepCollectionEquality().hash(subsurfacesBelow),
       const DeepCollectionEquality().hash(subsurfacesAbove),
       inputRegion,
@@ -89,7 +89,7 @@ mixin _$SurfaceState {
 
   @override
   String toString() {
-    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion, opaqueRect: $opaqueRect)';
+    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, popupAnchor: $popupAnchor, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion, opaqueRect: $opaqueRect)';
   }
 }
 
@@ -109,7 +109,7 @@ abstract mixin class $SurfaceStateCopyWith<$Res> {
       Rect bufferSourceBox,
       Size bufferSize,
       GlobalKey widgetKey,
-      GlobalKey textureKey,
+      LayerLink popupAnchor,
       List<int> subsurfacesBelow,
       List<int> subsurfacesAbove,
       Rect inputRegion,
@@ -137,7 +137,7 @@ class _$SurfaceStateCopyWithImpl<$Res> implements $SurfaceStateCopyWith<$Res> {
     Object? bufferSourceBox = null,
     Object? bufferSize = null,
     Object? widgetKey = null,
-    Object? textureKey = null,
+    Object? popupAnchor = null,
     Object? subsurfacesBelow = null,
     Object? subsurfacesAbove = null,
     Object? inputRegion = null,
@@ -180,10 +180,10 @@ class _$SurfaceStateCopyWithImpl<$Res> implements $SurfaceStateCopyWith<$Res> {
           ? _self.widgetKey
           : widgetKey // ignore: cast_nullable_to_non_nullable
               as GlobalKey,
-      textureKey: null == textureKey
-          ? _self.textureKey
-          : textureKey // ignore: cast_nullable_to_non_nullable
-              as GlobalKey,
+      popupAnchor: null == popupAnchor
+          ? _self.popupAnchor
+          : popupAnchor // ignore: cast_nullable_to_non_nullable
+              as LayerLink,
       subsurfacesBelow: null == subsurfacesBelow
           ? _self.subsurfacesBelow
           : subsurfacesBelow // ignore: cast_nullable_to_non_nullable
@@ -307,7 +307,7 @@ extension SurfaceStatePatterns on SurfaceState {
             Rect bufferSourceBox,
             Size bufferSize,
             GlobalKey widgetKey,
-            GlobalKey textureKey,
+            LayerLink popupAnchor,
             List<int> subsurfacesBelow,
             List<int> subsurfacesAbove,
             Rect inputRegion,
@@ -328,7 +328,7 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.bufferSourceBox,
             _that.bufferSize,
             _that.widgetKey,
-            _that.textureKey,
+            _that.popupAnchor,
             _that.subsurfacesBelow,
             _that.subsurfacesAbove,
             _that.inputRegion,
@@ -363,7 +363,7 @@ extension SurfaceStatePatterns on SurfaceState {
             Rect bufferSourceBox,
             Size bufferSize,
             GlobalKey widgetKey,
-            GlobalKey textureKey,
+            LayerLink popupAnchor,
             List<int> subsurfacesBelow,
             List<int> subsurfacesAbove,
             Rect inputRegion,
@@ -383,7 +383,7 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.bufferSourceBox,
             _that.bufferSize,
             _that.widgetKey,
-            _that.textureKey,
+            _that.popupAnchor,
             _that.subsurfacesBelow,
             _that.subsurfacesAbove,
             _that.inputRegion,
@@ -417,7 +417,7 @@ extension SurfaceStatePatterns on SurfaceState {
             Rect bufferSourceBox,
             Size bufferSize,
             GlobalKey widgetKey,
-            GlobalKey textureKey,
+            LayerLink popupAnchor,
             List<int> subsurfacesBelow,
             List<int> subsurfacesAbove,
             Rect inputRegion,
@@ -437,7 +437,7 @@ extension SurfaceStatePatterns on SurfaceState {
             _that.bufferSourceBox,
             _that.bufferSize,
             _that.widgetKey,
-            _that.textureKey,
+            _that.popupAnchor,
             _that.subsurfacesBelow,
             _that.subsurfacesAbove,
             _that.inputRegion,
@@ -461,7 +461,7 @@ class _SurfaceState implements SurfaceState {
       required this.bufferSourceBox,
       required this.bufferSize,
       required this.widgetKey,
-      required this.textureKey,
+      required this.popupAnchor,
       required final List<int> subsurfacesBelow,
       required final List<int> subsurfacesAbove,
       required this.inputRegion,
@@ -488,7 +488,7 @@ class _SurfaceState implements SurfaceState {
   @override
   final GlobalKey widgetKey;
   @override
-  final GlobalKey textureKey;
+  final LayerLink popupAnchor;
   final List<int> _subsurfacesBelow;
   @override
   List<int> get subsurfacesBelow {
@@ -541,8 +541,8 @@ class _SurfaceState implements SurfaceState {
                 other.bufferSize == bufferSize) &&
             (identical(other.widgetKey, widgetKey) ||
                 other.widgetKey == widgetKey) &&
-            (identical(other.textureKey, textureKey) ||
-                other.textureKey == textureKey) &&
+            (identical(other.popupAnchor, popupAnchor) ||
+                other.popupAnchor == popupAnchor) &&
             const DeepCollectionEquality()
                 .equals(other._subsurfacesBelow, _subsurfacesBelow) &&
             const DeepCollectionEquality()
@@ -565,7 +565,7 @@ class _SurfaceState implements SurfaceState {
       bufferSourceBox,
       bufferSize,
       widgetKey,
-      textureKey,
+      popupAnchor,
       const DeepCollectionEquality().hash(_subsurfacesBelow),
       const DeepCollectionEquality().hash(_subsurfacesAbove),
       inputRegion,
@@ -573,7 +573,7 @@ class _SurfaceState implements SurfaceState {
 
   @override
   String toString() {
-    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, textureKey: $textureKey, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion, opaqueRect: $opaqueRect)';
+    return 'SurfaceState(role: $role, viewId: $viewId, textureId: $textureId, surfacePosition: $surfacePosition, surfaceSize: $surfaceSize, scale: $scale, bufferSourceBox: $bufferSourceBox, bufferSize: $bufferSize, widgetKey: $widgetKey, popupAnchor: $popupAnchor, subsurfacesBelow: $subsurfacesBelow, subsurfacesAbove: $subsurfacesAbove, inputRegion: $inputRegion, opaqueRect: $opaqueRect)';
   }
 }
 
@@ -595,7 +595,7 @@ abstract mixin class _$SurfaceStateCopyWith<$Res>
       Rect bufferSourceBox,
       Size bufferSize,
       GlobalKey widgetKey,
-      GlobalKey textureKey,
+      LayerLink popupAnchor,
       List<int> subsurfacesBelow,
       List<int> subsurfacesAbove,
       Rect inputRegion,
@@ -624,7 +624,7 @@ class __$SurfaceStateCopyWithImpl<$Res>
     Object? bufferSourceBox = null,
     Object? bufferSize = null,
     Object? widgetKey = null,
-    Object? textureKey = null,
+    Object? popupAnchor = null,
     Object? subsurfacesBelow = null,
     Object? subsurfacesAbove = null,
     Object? inputRegion = null,
@@ -667,10 +667,10 @@ class __$SurfaceStateCopyWithImpl<$Res>
           ? _self.widgetKey
           : widgetKey // ignore: cast_nullable_to_non_nullable
               as GlobalKey,
-      textureKey: null == textureKey
-          ? _self.textureKey
-          : textureKey // ignore: cast_nullable_to_non_nullable
-              as GlobalKey,
+      popupAnchor: null == popupAnchor
+          ? _self.popupAnchor
+          : popupAnchor // ignore: cast_nullable_to_non_nullable
+              as LayerLink,
       subsurfacesBelow: null == subsurfacesBelow
           ? _self._subsurfacesBelow
           : subsurfacesBelow // ignore: cast_nullable_to_non_nullable

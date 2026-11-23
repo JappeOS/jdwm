@@ -6,12 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
-import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
-import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
 import 'package:jdwm/src/core/models/toplevel_decoration.dart';
-import 'package:jdwm/src/util/backend_surface_geometry.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/managed_surface_rect.dart';
 import 'package:jdwm/src/util/flutter_frame_trace.dart';
 
 import '../zenith_backend.dart';
@@ -465,41 +463,16 @@ class WindowManagerState extends State<WindowManager> {
       ),
     );
 
-    subs.add(
-      _backendContainer!.listen(
-        xdgSurfaceStatesProvider(viewId).select((v) => v.visibleBounds),
-        (previous, next) {
-          if (_backendUsesSurfaceDestinationSize(viewId)) {
-            return;
-          }
-          _applyBackendWindowSizeUpdate(
-            viewId,
-            entry,
-            previousSize: previous?.size,
-            nextSize: next.size,
-          );
-        },
-        fireImmediately: true,
+    subs.add(_backendContainer!.listen(
+      managedSurfaceRectProvider(viewId),
+      (previous, next) => _applyBackendWindowSizeUpdate(
+        viewId,
+        entry,
+        previousSize: previous?.size,
+        nextSize: next.size,
       ),
-    );
-
-    subs.add(
-      _backendContainer!.listen(
-        surfaceStatesProvider(viewId).select((v) => v.surfaceSize),
-        (previous, next) {
-          if (!_backendUsesSurfaceDestinationSize(viewId)) {
-            return;
-          }
-          _applyBackendWindowSizeUpdate(
-            viewId,
-            entry,
-            previousSize: previous,
-            nextSize: next,
-          );
-        },
-        fireImmediately: true,
-      ),
-    );
+      fireImmediately: true,
+    ));
 
     _backendSubscriptions[viewId] = subs;
   }
@@ -520,20 +493,8 @@ class WindowManagerState extends State<WindowManager> {
     );
   }
 
-  Rect _backendViewportRectForEntry(int viewId) {
-    if (_backendContainer == null) {
-      return Rect.zero;
-    }
-    final surface = _backendContainer!.read(surfaceStatesProvider(viewId));
-    final visibleBounds =
-        _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
-    return backendManagedSurfaceRect(
-      surfaceSize: surface.surfaceSize,
-      visibleBounds: visibleBounds,
-      bufferSourceBox: surface.bufferSourceBox,
-      bufferSize: surface.bufferSize,
-    );
-  }
+  Rect _backendViewportRectForEntry(int viewId) =>
+      _backendContainer?.read(managedSurfaceRectProvider(viewId)) ?? Rect.zero;
 
   void _applyBackendWindowSizeUpdate(
     int viewId,
@@ -577,20 +538,6 @@ class WindowManagerState extends State<WindowManager> {
     _notifyWindowStateListeners();
   }
 
-  bool _backendUsesSurfaceDestinationSize(int viewId) {
-    if (_backendContainer == null) {
-      return false;
-    }
-    final surface = _backendContainer!.read(surfaceStatesProvider(viewId));
-    final visibleBounds =
-        _backendContainer!.read(xdgSurfaceStatesProvider(viewId)).visibleBounds;
-    return backendUsesSurfaceDestinationSize(
-      surfaceSize: surface.surfaceSize,
-      visibleBounds: visibleBounds,
-      bufferSourceBox: surface.bufferSourceBox,
-      bufferSize: surface.bufferSize,
-    );
-  }
 
   Offset _computeWindowOffset(ResizeEdge edge, Size oldSize, Size newSize) {
     final dx = newSize.width - oldSize.width;
@@ -722,7 +669,7 @@ class WindowManagerState extends State<WindowManager> {
     if (viewId != null && _backendContainer != null) {
       _backendContainer!
           .read(xdgToplevelStatesProvider(viewId).notifier)
-          .requestVisible(true);
+          .requestRestore();
     } else {
       entry.minimized = false;
     }
@@ -744,29 +691,21 @@ class WindowManagerState extends State<WindowManager> {
     }
 
     final targetViewId = entry.backendViewId;
-    if (!orderChanged &&
-        targetViewId != null &&
-        container
-            .read(xdgToplevelStatesProvider(targetViewId))
-            .focusNode
-            .hasFocus) {
-      return;
-    }
-    // FocusNode transitions own backend activation (_SurfaceFocus). Restoring
-    // keyboard focus remains necessary even if this window is already on top.
     var keyboardChanged = false;
-    for (final viewId in _backendWindows.keys) {
-      final focusNode =
-          container.read(xdgToplevelStatesProvider(viewId)).focusNode;
-      if (targetViewId != null && viewId == targetViewId) {
-        if (!focusNode.hasFocus) {
+    if (targetViewId != null) {
+      final target =
+          container.read(xdgToplevelStatesProvider(targetViewId)).focusNode;
+      keyboardChanged = !target.hasFocus;
+
+      // Flutter transfers focus and deactivates the old client. Explicitly
+      // unfocusing its node here can overwrite the pending transfer.
+      target.requestFocus();
+    } else {
+      for (final viewId in _backendWindows.keys) {
+        final node = container.read(xdgToplevelStatesProvider(viewId)).focusNode;
+        if (node.hasFocus) {
           keyboardChanged = true;
-          focusNode.requestFocus();
-        }
-      } else {
-        if (focusNode.hasFocus) {
-          keyboardChanged = true;
-          focusNode.unfocus();
+          node.unfocus();
         }
       }
     }
@@ -782,6 +721,7 @@ class WindowManagerState extends State<WindowManager> {
     if (container == null) {
       return const <ManagedWindowInfo>[];
     }
+
     final focusedEntry = _hierarchyKey.currentState?.entriesByFocus.lastOrNull;
     final focusedViewId = focusedEntry?.backendViewId;
     final infos = <ManagedWindowInfo>[];
@@ -791,11 +731,13 @@ class WindowManagerState extends State<WindowManager> {
       if (viewId == null) {
         continue;
       }
+
       final state = container.read(xdgToplevelStatesProvider(viewId));
       final protocol =
           container.read(platformApiProvider.notifier).isXwaylandView(viewId)
               ? ManagedWindowProtocol.xwayland
               : ManagedWindowProtocol.xdg;
+
       infos.add(
         ManagedWindowInfo(
           viewId: viewId,
@@ -811,6 +753,7 @@ class WindowManagerState extends State<WindowManager> {
         ),
       );
     }
+    
     return infos;
   }
 

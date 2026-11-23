@@ -24,6 +24,7 @@ struct ZenithSurface {
 	/* callbacks */
 	wl_listener commit{};
 	wl_listener new_subsurface{};
+	wl_listener unmap{};
 	wl_listener destroy{};
 };
 

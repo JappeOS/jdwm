@@ -4,7 +4,6 @@ import 'package:fast_immutable_collections/fast_immutable_collections.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
-import 'package:jdwm/src/ui/common/popup_stack.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/subsurface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_popup_state.dart';
@@ -16,6 +15,7 @@ import 'package:jdwm/src/core/models/toplevel_decoration.dart';
 import 'package:jdwm/src/core/models/xdg_surface_role.dart';
 
 import '../window_metadata.dart';
+import 'surface_texture_lifetime.dart';
 
 part 'platform_api.g.dart';
 
@@ -99,6 +99,7 @@ class BackendMonitorList extends _$BackendMonitorList {
 
 @Riverpod(keepAlive: true)
 class PlatformApi extends _$PlatformApi {
+  late final surfaceTextures = SurfaceTextureLifetime(unregisterViewTexture);
   final Set<int> _genericToplevelViewIds = <int>{};
   final Map<int, String> _genericToplevelProtocols = <int, String>{};
   final Map<int, BackendWindowInfo> _toplevelWindows =
@@ -123,6 +124,9 @@ class PlatformApi extends _$PlatformApi {
   void init() {
     state.platform.setMethodCallHandler((call) async {
       switch (call.method) {
+        case "texture_destroyed":
+          surfaceTextures.destroy(call.arguments as int);
+          break;
         case "commit_surface":
           _commitSurface(call.arguments);
           break;
@@ -522,17 +526,19 @@ class PlatformApi extends _$PlatformApi {
     }
   }
 
+  XdgSurfaceRole _xdgRole(int viewId, dynamic event) {
+    final role = ref.read(xdgSurfaceStatesProvider(viewId)).role;
+    final mappedRole = event["role"];
+    if (role == XdgSurfaceRole.none && mappedRole is int &&
+        mappedRole >= 0 && mappedRole < XdgSurfaceRole.values.length) {
+      return XdgSurfaceRole.values[mappedRole];
+    }
+    return role;
+  }
+
   void _mapXdgSurface(dynamic event) {
     int viewId = event["view_id"];
-
-    XdgSurfaceRole role = ref.read(xdgSurfaceStatesProvider(viewId)).role;
-    if (role == XdgSurfaceRole.none && event["role"] != null) {
-      int mappedRole = event["role"];
-      if (mappedRole >= 0 && mappedRole < XdgSurfaceRole.values.length) {
-        role = XdgSurfaceRole.values[mappedRole];
-      }
-    }
-
+    final role = _xdgRole(viewId, event);
     switch (role) {
       case XdgSurfaceRole.none:
         if (kDebugMode) {
@@ -546,15 +552,15 @@ class PlatformApi extends _$PlatformApi {
         _mapToplevelView(viewId);
         break;
       case XdgSurfaceRole.popup:
-        ref.read(popupStackChildrenProvider.notifier).add(viewId);
+        ref.read(xdgPopupStatesProvider(viewId).notifier).map();
         break;
     }
   }
 
-  void _unmapXdgSurface(dynamic event) async {
+  void _unmapXdgSurface(dynamic event) {
     int viewId = event["view_id"];
 
-    XdgSurfaceRole role = ref.read(xdgSurfaceStatesProvider(viewId)).role;
+    final role = _xdgRole(viewId, event);
     switch (role) {
       case XdgSurfaceRole.none:
         if (kDebugMode) {
@@ -568,10 +574,7 @@ class PlatformApi extends _$PlatformApi {
         _unmapToplevelView(viewId);
         break;
       case XdgSurfaceRole.popup:
-        await ref
-            .read(xdgPopupStatesProvider(viewId).notifier)
-            .animateClosing();
-        ref.read(popupStackChildrenProvider.notifier).remove(viewId);
+        ref.read(xdgPopupStatesProvider(viewId).notifier).unmap();
         break;
     }
   }

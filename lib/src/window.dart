@@ -8,10 +8,9 @@ import 'package:provider/provider.dart' as provider_pkg hide Consumer;
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
-import 'package:jdwm/src/adapters/riverpod/providers/xdg_surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
 import 'package:jdwm/src/core/models/resize.dart';
-import 'package:jdwm/src/util/backend_surface_geometry.dart';
+import 'package:jdwm/src/adapters/riverpod/providers/managed_surface_rect.dart';
 import 'package:jdwm/src/util/rect_overflow_box.dart';
 import 'package:jdwm/src/ui/common/window_backdrop.dart';
 import 'package:jdwm/src/ui/common/window_occlusion_stack.dart';
@@ -501,7 +500,7 @@ class _WindowState extends State<Window> {
     return Consumer(
       child: entry.content,
       builder: (BuildContext context, WidgetRef ref, Widget? child) {
-        final rect = _backendViewportRectFromRef(ref, entry, viewId);
+        final rect = ref.watch(managedSurfaceRectProvider(viewId));
         if (rect.size.isEmpty ||
             !rect.left.isFinite ||
             !rect.top.isFinite ||
@@ -515,25 +514,6 @@ class _WindowState extends State<Window> {
         );
       },
     );
-  }
-
-  Rect _backendViewportRectFromRef(
-      WidgetRef ref, WindowEntry entry, int viewId) {
-    final visibleBounds = ref
-        .watch(xdgSurfaceStatesProvider(viewId).select((v) => v.visibleBounds));
-    final surfaceSize =
-        ref.watch(surfaceStatesProvider(viewId).select((v) => v.surfaceSize));
-    final bufferSourceBox = ref
-        .watch(surfaceStatesProvider(viewId).select((v) => v.bufferSourceBox));
-    final bufferSize =
-        ref.watch(surfaceStatesProvider(viewId).select((v) => v.bufferSize));
-    final managedRect = backendManagedSurfaceRect(
-      surfaceSize: surfaceSize,
-      visibleBounds: visibleBounds,
-      bufferSourceBox: bufferSourceBox,
-      bufferSize: bufferSize,
-    );
-    return managedRect.size.isEmpty ? visibleBounds : managedRect;
   }
 
   @override
@@ -764,7 +744,7 @@ class _WindowState extends State<Window> {
     return Consumer(
       child: container,
       builder: (context, ref, child) {
-        final viewport = _backendViewportRectFromRef(ref, widget.entry, viewId);
+        final viewport = ref.watch(managedSurfaceRectProvider(viewId));
         final surfaceOpaque = ref.watch(
           surfaceStatesProvider(viewId).select((state) => state.opaqueRect),
         );

@@ -5,21 +5,24 @@ import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 
 class Subsurface extends StatelessWidget {
   final int viewId;
+  final Widget? child;
 
   const Subsurface({
     super.key,
     required this.viewId,
+    this.child,
   });
 
   @override
   Widget build(BuildContext context) {
     return _Positioner(
       viewId: viewId,
-      child: Consumer(
-        builder: (BuildContext context, WidgetRef ref, Widget? child) {
-          return ref.watch(surfaceWidgetProvider(viewId));
-        },
-      ),
+      child: child ??
+          Consumer(
+            builder: (BuildContext context, WidgetRef ref, Widget? child) {
+              return ref.watch(surfaceWidgetProvider(viewId));
+            },
+          ),
     );
   }
 }
@@ -36,7 +39,8 @@ class _Positioner extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    Offset position = ref.watch(subsurfaceStatesProvider(viewId).select((v) => v.position));
+    Offset position =
+        ref.watch(subsurfaceStatesProvider(viewId).select((v) => v.position));
 
     return Positioned(
       left: position.dx,

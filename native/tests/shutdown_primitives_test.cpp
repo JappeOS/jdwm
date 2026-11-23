@@ -15,7 +15,7 @@ int main() {
 	assert(chain.start_write());
 	chain.end_write({&rect, 1});
 	auto displayed = chain.start_read_slot();
-	for (int i = 0; i < 3; ++i) {
+	for (int i = 0; i < 2; ++i) {
 		assert(chain.start_write());
 		chain.end_write({&rect, 1}, eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC));
 	}

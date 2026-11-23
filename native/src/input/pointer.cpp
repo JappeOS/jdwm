@@ -2,6 +2,7 @@
  * Pointer support is not perfectly implemented
  */
 
+#include "util/environment.hpp"
 #include "pointer.hpp"
 #include "server.hpp"
 #include "time.hpp"
@@ -28,12 +29,10 @@ static bool has_any_output(ZenithServer* server) {
 }
 
 void ZenithPointer::trace(const char* event, double x, double y, double raw_x, double raw_y) const {
-	static const bool enabled = [] {
-		const char* value = std::getenv("ZENITH_TRACE_POINTER");
-		return value && value[0] && value[0] != '0';
-	}();
+	static const bool enabled = zenith::config::flag_enabled("ZENITH_TRACE_POINTER");
 
-	if (!enabled || !server->seat) return;
+	if (!enabled || !server->seat)
+		return;
 
 	const auto& state = server->seat->pointer_state;
 	const auto* constraint = server->active_pointer_constraint;

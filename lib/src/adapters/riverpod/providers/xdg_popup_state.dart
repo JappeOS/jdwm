@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:jdwm/src/ui/common/popup_stack.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -18,7 +19,8 @@ final xdgPopupControllerProvider = Provider<XdgPopupController>(
 @Riverpod(keepAlive: true)
 Popup popupWidget(Ref ref, int viewId) {
   return Popup(
-    key: ref.watch(xdgSurfaceStatesProvider(viewId).select((state) => state.widgetKey)),
+    key: ref.watch(
+        xdgSurfaceStatesProvider(viewId).select((state) => state.widgetKey)),
     viewId: viewId,
   );
 }
@@ -49,29 +51,50 @@ class XdgPopupStates extends _$XdgPopupStates {
     required Offset position,
   }) {
     state = _fromSnapshot(
-      ref
-          .read(xdgPopupControllerProvider)
-          .commit(_toSnapshot(state), parentViewId: parentViewId, position: position),
+      ref.read(xdgPopupControllerProvider).commit(_toSnapshot(state),
+          parentViewId: parentViewId, position: position),
     );
   }
 
   set parentViewId(int value) {
     state = _fromSnapshot(
-      ref.read(xdgPopupControllerProvider).setParentViewId(_toSnapshot(state), value),
+      ref
+          .read(xdgPopupControllerProvider)
+          .setParentViewId(_toSnapshot(state), value),
     );
   }
 
   set position(Offset value) {
     state = _fromSnapshot(
-      ref.read(xdgPopupControllerProvider).setPosition(_toSnapshot(state), value),
+      ref
+          .read(xdgPopupControllerProvider)
+          .setPosition(_toSnapshot(state), value),
     );
   }
 
-  FutureOr animateClosing() {
-    state = _fromSnapshot(
-      ref.read(xdgPopupControllerProvider).startClosing(_toSnapshot(state)),
-    );
-    return state.animationsKey.currentState?.controller.reverse();
+  int _generation = 0;
+
+  void map() {
+    ++_generation;
+    state = state.copyWith(isClosing: false);
+    ref.read(popupStackChildrenProvider.notifier).add(viewId);
+  }
+
+  void unmap() {
+    if (state.isClosing) return;
+    state = state.copyWith(isClosing: true);
+    if (state.animationsKey.currentState == null) _finishClose(_generation);
+  }
+
+  VoidCallback closeCompletion() {
+    final generation = _generation;
+    return () => _finishClose(generation);
+  }
+
+  void _finishClose(int generation) {
+    if (ref.mounted && generation == _generation && state.isClosing) {
+      ref.read(popupStackChildrenProvider.notifier).remove(viewId);
+    }
   }
 
   XdgPopupSnapshot _toSnapshot(XdgPopupState s) {

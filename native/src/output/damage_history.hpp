@@ -8,6 +8,7 @@
 #include <deque>
 #include "third_party/embedder.h"
 #include "util/array_view.hpp"
+#include "util/environment.hpp"
 
 namespace zenith::render {
 
@@ -46,10 +47,7 @@ struct Damage {
 };
 
 inline bool force_full_repaint() {
-	static const bool enabled = [] {
-		const char* value = std::getenv("ZENITH_FORCE_FULL_REPAINT");
-		return value && value[0] && value[0] != '0';
-	}();
+	static const bool enabled = zenith::config::flag_enabled("ZENITH_FORCE_FULL_REPAINT");
 	return enabled;
 }
 

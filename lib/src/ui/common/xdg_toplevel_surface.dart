@@ -2,7 +2,6 @@ import 'package:jdwm/src/util/flutter_frame_trace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:visibility_detector/visibility_detector.dart';
 import 'package:jdwm/src/backend/platform_api.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/surface_state.dart';
 import 'package:jdwm/src/adapters/riverpod/providers/xdg_toplevel_state.dart';
@@ -17,22 +16,11 @@ class XdgToplevelSurface extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return VisibilityDetector(
-      key: ValueKey(viewId),
-      onVisibilityChanged: (VisibilityInfo info) {
-        bool visible = info.visibleFraction > 0;
-        if (ref.context.mounted) {
-          ref
-              .read(xdgToplevelStatesProvider(viewId).notifier)
-              .requestVisible(visible);
-        }
-      },
-      child: _SurfaceFocus(
+    return _SurfaceFocus(
+      viewId: viewId,
+      child: _PointerListener(
         viewId: viewId,
-        child: _PointerListener(
-          viewId: viewId,
-          child: ref.watch(surfaceWidgetProvider(viewId)),
-        ),
+        child: ref.watch(surfaceWidgetProvider(viewId)),
       ),
     );
   }

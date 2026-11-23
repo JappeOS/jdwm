@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include "embedder_state.hpp"
+#include "util/fence_diagnostics.hpp"
 #include "swap_chain.hpp"
 #include "util/wlr/wlr_helpers.hpp"
 #include <GLES2/gl2.h>
@@ -52,6 +53,7 @@ struct ZenithOutput {
 	// Keep its read lease independently of the previously displayed source.
 	std::shared_ptr<Slot<wlr_gles2_buffer>> scene_slot;
 	bool scene_commit_pending = false;
+	zenith::diagnostics::FenceFailures commit_failures;
 
 	bool enable();
 

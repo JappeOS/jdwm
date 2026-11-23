@@ -45,7 +45,7 @@ struct EmbedderState {
 
 	FlutterEngine get_engine() const;
 
-	VsyncDispatch poll_vsync(uint64_t now_ns, uint64_t interval_ns, bool frame_ready);
+	VsyncDispatch poll_vsync(uint64_t now_ns, uint64_t interval_ns, SwapChain<wlr_gles2_buffer>& chain);
 
 	void set_baton(intptr_t baton);
 
@@ -58,6 +58,8 @@ struct EmbedderState {
 	void send_key_event(const KeyboardKeyEventMessage& message);
 
 	void register_external_texture(int64_t id);
+	
+	void notify_texture_destroyed(int64_t id);
 
 	void mark_external_texture_frame_available(int64_t id);
 

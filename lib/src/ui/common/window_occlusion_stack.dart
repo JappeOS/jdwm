@@ -62,8 +62,10 @@ class RenderWindowOcclusionStack extends RenderStack
     markNeedsPaint();
   }
 
+  // Reuse the window masks and layers when a sibling (cursor, dock or menu)
+  // animates. WindowPaintBoundary still invalidates this stack on window moves.
   @override
-  bool get alwaysNeedsCompositing => true;
+  bool get isRepaintBoundary => true;
 
   @override
   void invalidateOcclusion() => markNeedsPaint();
@@ -143,18 +145,32 @@ class RenderWindowOcclusionStack extends RenderStack
           .where((rect) => rect.overlaps(bounds))
           .map((rect) => rect.intersect(bounds))
           .toList();
+
       FlutterFrameTrace.occlusion(bounds.intersect(needed.bounds), visible);
+
       if (visible.isEmpty) continue;
+
       final parentData = child.parentData! as StackParentData;
-      if (masks[i].length == 1 && masks[i].single == needed.bounds) {
+      final unmasked = masks[i].length == 1 && masks[i].single == needed.bounds;
+      if (unmasked ||
+          (visible.length == 1 && visible.single == paintedBounds[i])) {
         context.paintChild(child, offset + parentData.offset);
         continue;
       }
+
+      if (visible.length == 1) {
+        context.pushClipRect(true, offset, visible.single, (context, offset) {
+          context.paintChild(child, offset + parentData.offset);
+        });
+        continue;
+      }
+
       // Disjoint rectangles use non-zero winding, never an even-odd mask.
       final path = Path();
       for (final rect in visible) {
         path.addRect(rect);
       }
+      
       context.pushClipPath(
           true,
           offset,

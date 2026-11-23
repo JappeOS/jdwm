@@ -37,7 +37,9 @@ int main() {
 
 	// Exhaustion must not fall back to overwriting a displayed frame.
 	for (auto& candidate : chain.slots) candidate->acquire_presentation();
+	assert(!chain.can_schedule_frame());
 	assert(chain.start_write() == nullptr);
 	for (auto& candidate : chain.slots) candidate->release_presentation();
+	assert(chain.can_schedule_frame());
 	assert(chain.start_write() != nullptr);
 }

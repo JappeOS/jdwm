@@ -1,9 +1,9 @@
-#include "rendering_policy.hpp"
-
 #include <cstdlib>
 
 #include "server.hpp"
 #include "zenith_output_manager.hpp"
+#include "util/environment.hpp"
+#include "rendering_policy.hpp"
 
 namespace {
 
@@ -23,14 +23,6 @@ size_t parse_swapchain_buffer_count_override() {
 	return static_cast<size_t>(parsed);
 }
 
-bool env_is_enabled(const char* name) {
-	const char* value = std::getenv(name);
-	if (value == nullptr || value[0] == '\0') {
-		return false;
-	}
-	return value[0] != '0';
-}
-
 } // namespace
 
 namespace zenith::render {
@@ -45,11 +37,11 @@ size_t desired_swapchain_buffer_count(const ZenithServer* server) {
 }
 
 bool force_software_cursor() {
-	return env_is_enabled("ZENITH_FORCE_SOFTWARE_CURSOR");
+	return zenith::config::flag_enabled("ZENITH_FORCE_SOFTWARE_CURSOR");
 }
 
 bool allow_direct_scanout() {
-	return env_is_enabled("ZENITH_ALLOW_DIRECT_SCANOUT");
+	return zenith::config::flag_enabled("ZENITH_ALLOW_DIRECT_SCANOUT");
 }
 
 } // namespace zenith::render

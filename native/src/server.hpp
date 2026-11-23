@@ -129,7 +129,7 @@ public:
 	std::unordered_map<wlr_xwayland_surface*, std::shared_ptr<ZenithXwaylandToplevel>> xwayland_surfaces{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithXwaylandToplevel>> xwayland_toplevels{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithToplevel>> toplevels{};
-	std::unordered_map<size_t, std::shared_ptr<ZenithXdgPopup>> xdg_popups{};
+	std::unordered_map<size_t, std::unique_ptr<ZenithXdgPopup>> xdg_popups{};
 	std::unordered_map<size_t, std::shared_ptr<ZenithToplevelDecoration>> toplevel_decorations{};
 	std::unordered_map<size_t, wlr_box> toplevel_geometries{};
 
