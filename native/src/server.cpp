@@ -5,6 +5,7 @@
 #include "util/egl/egl_extensions.hpp"
 #include "util/egl/gl_context_lock.hpp"
 #include "util/environment.hpp"
+#include "util/session_environment.hpp"
 #include "egl/create_shared_egl_context.hpp"
 #include "zenith_toplevel_decoration.hpp"
 #include "output/output_management.hpp"
@@ -613,6 +614,10 @@ int ZenithServer::run(const char* startup_command) {
 		shutdown();
 		return exit_status;
 	}
+
+	// Both display sockets now exist. Wait for environment publication before
+	// Flutter can launch applications or enqueue the READY=1 notification.
+	zenith::publish_session_environment();
 
 	// Start wlroots outputs before Flutter's render thread. This avoids a
 	// software-renderer startup deadlock where Flutter makes its shared GL

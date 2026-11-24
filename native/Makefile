@@ -40,7 +40,7 @@ WLR_INC_SUBDIR ?= wlroots-0.19
 
 COMMON_CPPFLAGS := $(INC_FLAGS) \
 	 $(WARNINGS) \
-	 `pkg-config --cflags pixman-1 libdrm` \
+	 `pkg-config --cflags pixman-1 libdrm dbus-1` \
 	 -MMD -MP -DWLR_USE_UNSTABLE \
 	 -DZENITH_BUILD_VERSION=\"$(BUILD_VERSION)\" \
 	 -DZENITH_BUILD_GIT_COMMIT=\"$(BUILD_GIT_COMMIT)\" \
