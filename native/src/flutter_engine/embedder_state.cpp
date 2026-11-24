@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <poll.h>
 #include <stdexcept>
+#include <cstring>
+#include "util/service_notify.hpp"
 #include "server.hpp"
 #include "cursor_image_mapping.hpp"
 #include "cursor_debug.hpp"
@@ -148,6 +150,16 @@ void EmbedderState::run_engine() {
 			configure_and_run_engine();
 			platform_task_runner.set_engine(engine);
 			register_platform_api();
+			
+			// Dispatch on the Wayland thread only after Flutter startup succeeds.
+			// At this point the socket/backend are ready and the server event loop
+			// is running, so newly launched clients can connect and be serviced.
+			ZenithServer::instance()->callable_queue.enqueue([] {
+				if (ZenithServer::instance()->is_shutting_down()) return;
+				const int result = zenith::notify_ready();
+				if (result < 0)
+					wlr_log(WLR_ERROR, "Could not send readiness notification: %s", std::strerror(-result));
+			});
 		} catch (const std::exception& error) {
 			wlr_log(WLR_ERROR, "zenith: Flutter startup failed: %s", error.what());
 			ZenithServer::instance()->callable_queue.enqueue([] {
